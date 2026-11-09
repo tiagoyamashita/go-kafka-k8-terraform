@@ -2,7 +2,7 @@
 
 Build the receiver and transmitter, load them into a local kind cluster, and send one JSON message through Postgres to the outbound topic.
 
-Install Go, Terraform, Docker, kind, and kubectl with [setup.md](setup.md) first. This machine's Go 1.18 and Terraform 0.13 are too old for the commands below.
+Install Go, Terraform, Podman, kind, and kubectl with [setup.md](setup.md) first. This machine's Go 1.18 and Terraform 0.13 are too old for the commands below. The container engine is Podman. Start the Podman machine and set `KIND_EXPERIMENTAL_PROVIDER=podman` before creating the cluster or loading an image.
 
 ## Test
 
@@ -78,7 +78,7 @@ Pods in the cluster keep using `kafka-0.kafka:9092` and `postgres:5432`. A later
 The image contains both binaries. The receiver is the default command. The transmitter deployment overrides it with `/transmitter`.
 
 ```powershell
-docker build -t transfer:local .
+podman build -t transfer:local .
 ```
 
 With `make`:
@@ -92,13 +92,16 @@ make image
 Create the kind cluster first. The platform stack reads `terraform/cluster/kubeconfig`, which does not exist until that apply finishes. Build and load the image before the platform apply so the pods can find `transfer:local`.
 
 ```powershell
+$env:KIND_EXPERIMENTAL_PROVIDER = "podman"
 terraform -chdir=terraform/cluster init
 terraform -chdir=terraform/cluster apply -auto-approve
-docker build -t transfer:local .
+podman build -t transfer:local .
 kind load docker-image transfer:local --name transfer
 terraform -chdir=terraform/platform init
 terraform -chdir=terraform/platform apply -auto-approve
 ```
+
+`kind load docker-image` is the kind subcommand name. With the provider set to `podman`, it loads the image from the Podman store.
 
 With `make`, `make up` runs that same sequence.
 
@@ -153,7 +156,8 @@ The Postgres password for this local cluster is `transfer`. The database name is
 ## Rebuild after a code change
 
 ```powershell
-docker build -t transfer:local .
+$env:KIND_EXPERIMENTAL_PROVIDER = "podman"
+podman build -t transfer:local .
 kind load docker-image transfer:local --name transfer
 kubectl -n transfer rollout restart deploy/receiver deploy/transmitter
 ```

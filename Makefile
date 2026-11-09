@@ -1,5 +1,6 @@
 IMAGE ?= transfer:local
 CLUSTER ?= transfer
+export KIND_EXPERIMENTAL_PROVIDER ?= podman
 
 .PHONY: test image kind-up kind-load tf-init tf-apply data up
 
@@ -7,7 +8,7 @@ test:
 	go test ./...
 
 image:
-	docker build -t $(IMAGE) .
+	podman build -t $(IMAGE) .
 
 kind-up:
 	kind create cluster --name $(CLUSTER) --config kind/cluster.yaml

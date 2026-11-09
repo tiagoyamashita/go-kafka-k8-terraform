@@ -1,3 +1,6 @@
+# The kind provider uses Podman when the docker CLI is not on PATH.
+# `kind load` also needs KIND_EXPERIMENTAL_PROVIDER=podman so the image
+# is loaded into that same engine.
 resource "kind_cluster" "transfer" {
   name            = "transfer"
   node_image      = "kindest/node:v1.32.2"

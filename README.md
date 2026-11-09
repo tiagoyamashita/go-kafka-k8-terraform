@@ -9,7 +9,7 @@ transfers.in -> receiver -> Postgres (payload jsonb) -> transmitter -> transfers
 
 The same binaries talk to a local broker or to Confluent Cloud. Only the Kafka environment variables change.
 
-How the pieces fit together is in [docs/architecture.md](docs/architecture.md). Install Go, Terraform, Docker, kind, and kubectl with [docs/setup.md](docs/setup.md), then build and run with [docs/build-and-run.md](docs/build-and-run.md).
+How the pieces fit together is in [docs/architecture.md](docs/architecture.md). Install Go, Terraform, Podman, kind, and kubectl with [docs/setup.md](docs/setup.md), then build and run with [docs/build-and-run.md](docs/build-and-run.md).
 
 ## What is stored
 
@@ -44,12 +44,13 @@ go test ./...
 
 ## Bring up the local cluster
 
-Docker, kind, and Terraform 1.5 or newer are required. `make data` (or the targeted apply in [docs/build-and-run.md](docs/build-and-run.md)) starts only Kafka and Postgres and publishes them on `localhost:9092` and `localhost:5432`. The full apply below also starts the receiver, transmitter, and Grafana. The cluster stack and the platform stack are separate because the Kubernetes provider needs a kubeconfig that already exists.
+Podman, kind, and Terraform 1.5 or newer are required. Set `KIND_EXPERIMENTAL_PROVIDER=podman` first. `make data` (or the targeted apply in [docs/build-and-run.md](docs/build-and-run.md)) starts only Kafka and Postgres and publishes them on `localhost:9092` and `localhost:5432`. The full apply below also starts the receiver, transmitter, and Grafana. The cluster stack and the platform stack are separate because the Kubernetes provider needs a kubeconfig that already exists.
 
 ```powershell
+$env:KIND_EXPERIMENTAL_PROVIDER = "podman"
 terraform -chdir=terraform/cluster init
 terraform -chdir=terraform/cluster apply -auto-approve
-docker build -t transfer:local .
+podman build -t transfer:local .
 kind load docker-image transfer:local --name transfer
 terraform -chdir=terraform/platform init
 terraform -chdir=terraform/platform apply -auto-approve

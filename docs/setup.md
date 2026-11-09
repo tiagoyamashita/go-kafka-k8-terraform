@@ -11,11 +11,12 @@ Run the installers from an Administrator terminal. After each install, close tha
 ```bat
 go version
 terraform version
-docker version
+podman info
 kind version
 kubectl version --client
 where go
 where terraform
+where podman
 ```
 
 `where` prints every match. The first line is the one the shell runs.
@@ -59,21 +60,32 @@ terraform version
 
 Expected: version 1.5 or newer. If `where` still lists 0.13.4 first, that old binary is winning. Upgrade it with Chocolatey rather than installing a second copy somewhere else.
 
-## Docker Desktop
+## Podman
 
-kind runs the Kubernetes node as a Docker container. Terraform cannot create the cluster until Docker is running.
-
-```bat
-winget install -e --id Docker.DockerDesktop
-```
-
-Start Docker Desktop and wait until it reports that the engine is running. Then:
+kind runs the Kubernetes node as a Podman container. Leave Docker Desktop uninstalled. The Terraform kind provider selects Podman only when the `docker` command is absent.
 
 ```bat
-docker version
+winget install -e --id RedHat.Podman
+winget install -e --id RedHat.Podman-Desktop
 ```
 
-Both the client and the server sections should print a version.
+Open a new terminal, create the Podman machine, and start it:
+
+```bat
+podman machine init
+podman machine start
+podman info
+```
+
+Podman Desktop can create and start that machine for you. `podman info` should show the engine running before Terraform or kind runs.
+
+Tell kind to use Podman, including for later terminals:
+
+```bat
+setx KIND_EXPERIMENTAL_PROVIDER podman
+```
+
+`setx` applies to new terminals. In the current one, also run `set KIND_EXPERIMENTAL_PROVIDER=podman`.
 
 ## kubectl
 
@@ -106,16 +118,18 @@ Open one new terminal and run:
 ```bat
 go version
 terraform version
-docker version
+podman info
 kubectl version --client
 kind version
+echo %KIND_EXPERIMENTAL_PROVIDER%
 ```
 
 | Tool | Required |
 | --- | --- |
 | Go | 1.26 or newer |
 | Terraform | 1.5 or newer |
-| Docker | Engine running |
+| Podman | Machine running, and `podman info` succeeds |
+| KIND_EXPERIMENTAL_PROVIDER | `podman` |
 | kubectl | client installed |
 | kind | installed |
 
