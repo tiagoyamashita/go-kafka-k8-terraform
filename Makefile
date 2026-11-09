@@ -1,7 +1,7 @@
 IMAGE ?= transfer:local
 CLUSTER ?= transfer
 
-.PHONY: test image kind-up kind-load tf-init tf-apply up
+.PHONY: test image kind-up kind-load tf-init tf-apply data up
 
 test:
 	go test ./...
@@ -22,6 +22,15 @@ tf-init:
 tf-apply: tf-init
 	terraform -chdir=terraform/cluster apply -auto-approve
 	terraform -chdir=terraform/platform apply -auto-approve
+
+data: tf-init
+	terraform -chdir=terraform/cluster apply -auto-approve
+	terraform -chdir=terraform/platform apply -auto-approve \
+		-target=kubernetes_stateful_set.kafka \
+		-target=kubernetes_stateful_set.postgres \
+		-target=kubernetes_job.kafka_topics \
+		-target=kubernetes_service.kafka_node \
+		-target=kubernetes_service.postgres_node
 
 up: tf-init
 	terraform -chdir=terraform/cluster apply -auto-approve

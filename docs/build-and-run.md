@@ -46,7 +46,40 @@ $env:KAFKA_SECURITY_PROTOCOL = "PLAINTEXT"
 .\bin\receiver.exe
 ```
 
-Start the transmitter in a second terminal with the same `DATABASE_URL` and broker settings. The local kind brokers are only reachable as `kafka-0.kafka:9092` from inside the cluster, so the steps below are the supported way to run the whole path.
+Start the transmitter in a second terminal with the same `DATABASE_URL` and broker settings. Those `localhost` addresses work after the Kafka and Postgres apply below. Inside the cluster the same services are `kafka-0.kafka:9092` and `postgres:5432`.
+
+## Launch Kafka and Postgres
+
+This apply creates the kind cluster, then Kafka and Postgres only. The receiver, transmitter, and Grafana are left out, so no application image is required.
+
+```powershell
+terraform -chdir=terraform/cluster init
+terraform -chdir=terraform/cluster apply -auto-approve
+terraform -chdir=terraform/platform init
+terraform -chdir=terraform/platform apply -auto-approve `
+  -target=kubernetes_stateful_set.kafka `
+  -target=kubernetes_stateful_set.postgres `
+  -target=kubernetes_job.kafka_topics `
+  -target=kubernetes_service.kafka_node `
+  -target=kubernetes_service.postgres_node
+```
+
+With `make`, that sequence is `make data`.
+
+```powershell
+$env:KUBECONFIG = "$pwd\terraform\cluster\kubeconfig"
+kubectl -n transfer rollout status statefulset/kafka
+kubectl -n transfer rollout status statefulset/postgres
+```
+
+From this machine:
+
+| Service | Address | Credentials |
+| --- | --- | --- |
+| Kafka | `localhost:9092` | plaintext, no auth |
+| Postgres | `localhost:5432` | database `transfers`, user `transfer`, password `transfer` |
+
+Pods in the cluster keep using `kafka-0.kafka:9092` and `postgres:5432`. A later full apply adds the receiver, transmitter, and observability on top of these same brokers.
 
 ## Build the image
 

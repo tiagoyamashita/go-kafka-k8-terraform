@@ -64,6 +64,11 @@ resource "kubernetes_stateful_set" "kafka" {
           }
 
           port {
+            name           = "external"
+            container_port = 9094
+          }
+
+          port {
             name           = "controller"
             container_port = 9093
           }
@@ -78,15 +83,15 @@ resource "kubernetes_stateful_set" "kafka" {
           }
           env {
             name  = "KAFKA_LISTENERS"
-            value = "PLAINTEXT://:9092,CONTROLLER://:9093"
+            value = "PLAINTEXT://:9092,PLAINTEXT_HOST://:9094,CONTROLLER://:9093"
           }
           env {
             name  = "KAFKA_ADVERTISED_LISTENERS"
-            value = "PLAINTEXT://kafka-0.kafka:9092"
+            value = "PLAINTEXT://kafka-0.kafka:9092,PLAINTEXT_HOST://localhost:9092"
           }
           env {
             name  = "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP"
-            value = "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+            value = "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
           }
           env {
             name  = "KAFKA_CONTROLLER_LISTENER_NAMES"
@@ -214,4 +219,25 @@ resource "kubernetes_job" "kafka_topics" {
   }
 
   depends_on = [kubernetes_stateful_set.kafka]
+}
+
+resource "kubernetes_service" "kafka_node" {
+  metadata {
+    name      = "kafka-node"
+    namespace = local.namespace
+  }
+
+  spec {
+    type = "NodePort"
+    selector = {
+      app = "kafka"
+    }
+
+    port {
+      name        = "external"
+      port        = 9094
+      target_port = "9094"
+      node_port   = 30092
+    }
+  }
 }

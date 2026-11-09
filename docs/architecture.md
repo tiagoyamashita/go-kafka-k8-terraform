@@ -112,8 +112,8 @@ flowchart LR
 
 Terraform is split in two because the Kubernetes provider needs a kubeconfig that already exists.
 
-1. `terraform/cluster` creates a one-node kind cluster named `transfer` and writes `terraform/cluster/kubeconfig`. Grafana's NodePort `30080` is mapped to the host.
-2. `terraform/platform` installs the namespace `transfer` and everything in it.
+1. `terraform/cluster` creates a one-node kind cluster named `transfer` and writes `terraform/cluster/kubeconfig`. Host ports are `9092` for Kafka, `5432` for Postgres, and `30080` for Grafana.
+2. `terraform/platform` installs the namespace `transfer`. Kafka and Postgres are the data plane and can be applied on their own. The receiver, transmitter, and observability stack are the rest of the same apply.
 
 Platform pieces:
 

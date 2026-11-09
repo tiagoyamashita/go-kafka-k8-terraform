@@ -29,6 +29,27 @@ resource "kubernetes_service" "postgres" {
   }
 }
 
+resource "kubernetes_service" "postgres_node" {
+  metadata {
+    name      = "postgres-node"
+    namespace = local.namespace
+  }
+
+  spec {
+    type = "NodePort"
+    selector = {
+      app = "postgres"
+    }
+
+    port {
+      name        = "postgres"
+      port        = 5432
+      target_port = "5432"
+      node_port   = 30432
+    }
+  }
+}
+
 resource "kubernetes_stateful_set" "postgres" {
   metadata {
     name      = "postgres"

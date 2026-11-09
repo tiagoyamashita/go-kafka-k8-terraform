@@ -44,7 +44,7 @@ go test ./...
 
 ## Bring up the local cluster
 
-Docker, kind, and Terraform 1.5 or newer are required. The cluster stack and the platform stack are separate because the Kubernetes provider needs a kubeconfig that already exists.
+Docker, kind, and Terraform 1.5 or newer are required. `make data` (or the targeted apply in [docs/build-and-run.md](docs/build-and-run.md)) starts only Kafka and Postgres and publishes them on `localhost:9092` and `localhost:5432`. The full apply below also starts the receiver, transmitter, and Grafana. The cluster stack and the platform stack are separate because the Kubernetes provider needs a kubeconfig that already exists.
 
 ```powershell
 terraform -chdir=terraform/cluster init
