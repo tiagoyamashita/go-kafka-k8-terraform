@@ -9,6 +9,8 @@ transfers.in -> receiver -> Postgres (payload jsonb) -> transmitter -> transfers
 
 The same binaries talk to a local broker or to Confluent Cloud. Only the Kafka environment variables change.
 
+How the pieces fit together is in [docs/architecture.md](docs/architecture.md).
+
 ## What is stored
 
 Each inbound value must be a JSON object with a UUID `id`:
