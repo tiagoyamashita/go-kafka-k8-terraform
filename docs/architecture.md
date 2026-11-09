@@ -125,4 +125,4 @@ Platform pieces:
 
 Both deployments use that one image. The receiver command is `/receiver`. The transmitter command is `/transmitter`. Either process can apply the embedded SQL migration. A Postgres advisory lock keeps those startups from racing.
 
-Startup and the Confluent Cloud environment variables are in the [README](../README.md).
+Build and startup steps are in [build-and-run.md](build-and-run.md). Confluent Cloud environment variables are in the [README](../README.md).
