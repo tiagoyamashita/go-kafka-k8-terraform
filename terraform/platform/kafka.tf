@@ -174,7 +174,7 @@ resource "kubernetes_stateful_set" "kafka" {
       }
       spec {
         access_modes       = ["ReadWriteOnce"]
-        storage_class_name = kubernetes_storage_class.local_path.metadata[0].name
+        storage_class_name = "standard"
         resources {
           requests = {
             storage = "1Gi"

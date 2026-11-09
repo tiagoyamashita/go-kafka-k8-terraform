@@ -117,7 +117,7 @@ Terraform is split in two because the Kubernetes provider needs a kubeconfig tha
 
 Platform pieces:
 
-- local-path provisioner, so Kafka and Postgres keep a 1Gi volume across pod restarts
+- kind's built-in local-path StorageClass `standard`, so Kafka and Postgres keep a 1Gi volume across pod restarts
 - Postgres 16, database `transfers`, user `transfer`
 - Kafka and the topic job
 - receiver and transmitter, image `transfer:local`, `imagePullPolicy: IfNotPresent`
