@@ -69,15 +69,23 @@ winget install -e --id RedHat.Podman
 winget install -e --id RedHat.Podman-Desktop
 ```
 
-Open a new terminal, create the Podman machine, and start it:
+Open a new terminal, create a rootful Podman machine, and start it. kind cannot create the node on a rootless machine.
 
 ```bat
-podman machine init
+podman machine init --rootful --cpus 4 --memory 8192 --disk-size 50
 podman machine start
 podman info
 ```
 
-Podman Desktop can create and start that machine for you. `podman info` should show the engine running before Terraform or kind runs.
+If the machine already exists and `podman info` reports rootless mode, switch it:
+
+```bat
+podman machine stop
+podman machine set --rootful
+podman machine start
+```
+
+Podman Desktop can create and start that machine for you. `podman info` should show the engine running, and not rootless, before Terraform or kind runs.
 
 Tell kind to use Podman, including for later terminals:
 
