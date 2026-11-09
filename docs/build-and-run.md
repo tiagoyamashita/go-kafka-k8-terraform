@@ -2,7 +2,22 @@
 
 Build the receiver and transmitter, load them into a local kind cluster, and send one JSON message through Postgres to the outbound topic.
 
-Install Go, Terraform, Podman, kind, and kubectl with [setup.md](setup.md) first. This machine's Go 1.18 and Terraform 0.13 are too old for the commands below. The container engine is Podman. Start the Podman machine and set `KIND_EXPERIMENTAL_PROVIDER=podman` before creating the cluster or loading an image.
+Install Go, Terraform, Podman, kind, and kubectl with [setup.md](setup.md) first. Go must be 1.26 or newer and Terraform 1.5 or newer. The Podman machine must be rootful, and this shell must send kind to Podman:
+
+```powershell
+$env:KIND_EXPERIMENTAL_PROVIDER = "podman"
+terraform version
+podman info --format "{{.Host.Security.Rootless}}"
+```
+
+`terraform version` has to print 1.5 or newer. When it prints 0.13.4, Chocolatey's `terraform.exe` is the one on `PATH`. Put the winget binary first in this window:
+
+```powershell
+$env:Path = "$env:LOCALAPPDATA\Microsoft\WinGet\Links;" + $env:Path
+terraform version
+```
+
+`Rootless` has to print `false`. [setup.md](setup.md) has the `podman machine set --rootful` commands. kind refuses to create the node on a rootless machine.
 
 ## Test
 
@@ -42,21 +57,24 @@ Start the transmitter in a second terminal with the same `DATABASE_URL` and brok
 
 ## Launch Kafka and Postgres
 
-This apply creates the kind cluster, then Kafka and Postgres only. The receiver, transmitter, and Grafana are left out, so no application image is required.
+This apply creates the kind cluster, then Kafka and Postgres only. The receiver, transmitter, and Grafana are left out, so no application image is required. Volumes use the StorageClass `standard` that the kind node already installs.
 
 ```powershell
+$env:KIND_EXPERIMENTAL_PROVIDER = "podman"
 terraform -chdir=terraform/cluster init
 terraform -chdir=terraform/cluster apply -auto-approve
-terraform -chdir=terraform/platform init
-terraform -chdir=terraform/platform apply -auto-approve `
-  -target="kubernetes_stateful_set.kafka" `
-  -target="kubernetes_stateful_set.postgres" `
-  -target="kubernetes_job.kafka_topics" `
-  -target="kubernetes_service.kafka_node" `
-  -target="kubernetes_service.postgres_node"
 ```
 
-With `make`, that sequence is `make data`.
+`terraform\cluster\kubeconfig` must exist before the platform commands. When that file is already there, skip the cluster apply and continue:
+
+```powershell
+terraform -chdir=terraform/platform init
+terraform -chdir=terraform/platform apply -auto-approve -target="kubernetes_stateful_set.kafka" -target="kubernetes_stateful_set.postgres" -target="kubernetes_job.kafka_topics" -target="kubernetes_service.kafka_node" -target="kubernetes_service.postgres_node"
+```
+
+Quote each `-target` value. PowerShell otherwise cuts the resource name off at the dot.
+
+With `make`, that sequence is `make data`. `make` sets `KIND_EXPERIMENTAL_PROVIDER` for its own commands.
 
 ```powershell
 $env:KUBECONFIG = "$pwd\terraform\cluster\kubeconfig"
@@ -89,7 +107,7 @@ make image
 
 ## Start the cluster
 
-Create the kind cluster first. The platform stack reads `terraform/cluster/kubeconfig`, which does not exist until that apply finishes. Build and load the image before the platform apply so the pods can find `transfer:local`.
+The checks at the top of this page must already pass: Terraform 1.5 or newer, a rootful Podman machine, and `KIND_EXPERIMENTAL_PROVIDER=podman` in this shell. Create the kind cluster first. The platform stack reads `terraform/cluster/kubeconfig`, which does not exist until that apply finishes. Build and load the image before the platform apply so the pods can find `transfer:local`.
 
 ```powershell
 $env:KIND_EXPERIMENTAL_PROVIDER = "podman"
