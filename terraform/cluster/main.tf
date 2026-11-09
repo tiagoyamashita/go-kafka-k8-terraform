@@ -1,0 +1,22 @@
+resource "kind_cluster" "transfer" {
+  name            = "transfer"
+  node_image      = "kindest/node:v1.32.2"
+  wait_for_ready  = true
+  kubeconfig_path = "${path.module}/kubeconfig"
+
+  kind_config {
+    kind        = "Cluster"
+    api_version = "kind.x-k8s.io/v1alpha4"
+
+    node {
+      role  = "control-plane"
+      image = "kindest/node:v1.32.2"
+
+      extra_port_mappings {
+        container_port = 30080
+        host_port      = 30080
+        protocol       = "TCP"
+      }
+    }
+  }
+}
