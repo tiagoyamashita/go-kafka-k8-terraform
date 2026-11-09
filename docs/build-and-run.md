@@ -2,15 +2,7 @@
 
 Build the receiver and transmitter, load them into a local kind cluster, and send one JSON message through Postgres to the outbound topic.
 
-You need:
-
-- Go 1.26 or newer
-- Docker
-- [kind](https://kind.sigs.k8s.io/)
-- kubectl
-- Terraform 1.5 or newer
-
-The `go` command on this machine may still be older than 1.26. Use a newer toolchain for `go test` and `go build`.
+Install Go, Terraform, Docker, kind, and kubectl with [setup.md](setup.md) first. This machine's Go 1.18 and Terraform 0.13 are too old for the commands below.
 
 ## Test
 
