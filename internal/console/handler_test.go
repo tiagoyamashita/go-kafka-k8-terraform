@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -33,6 +34,12 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	}
 	if !strings.Contains(body, "The Go receiver writes this error. Kafka only stores the record.") {
 		t.Fatalf("page missing dead-letter source: %s", body)
+	}
+	if !strings.Contains(body, "The Go receiver stores this row in Postgres. Kafka only delivered the record.") {
+		t.Fatalf("page missing consumed source: %s", body)
+	}
+	if !strings.Contains(body, `id="dead-scroll"`) || !strings.Contains(body, `id="history-scroll"`) {
+		t.Fatalf("page missing independent scrolls: %s", body)
 	}
 }
 
@@ -254,6 +261,73 @@ func TestDeadLetterPaneShowsWhenTheReceiverWroteIt(t *testing.T) {
 	h.deadLetter(missing, missingReq)
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("status %d", missing.Code)
+	}
+}
+
+func TestListsShowTenThenTheNextTen(t *testing.T) {
+	mem := store.NewMemory()
+	tick := 0
+	start := time.Date(2026, 11, 10, 8, 0, 0, 0, time.UTC)
+	mem.SetNow(func() time.Time {
+		tick++
+		return start.Add(time.Duration(tick) * time.Second)
+	})
+	for i := 1; i <= 11; i++ {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+		_, err := mem.InsertReceived(context.Background(), transfer.Record{
+			ID:          id,
+			MessageKey:  id,
+			Payload:     []byte(`{"id":"` + id + `"}`),
+			SourceTopic: "transfers.in",
+			Partition:   0,
+			Offset:      int64(i),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newTestHandler(t, mem, &fakeProducer{})
+	first := httptest.NewRecorder()
+	h.history(first, httptest.NewRequest(http.MethodGet, "/history", nil))
+	body := first.Body.String()
+	newest := "00000000-0000-4000-8000-000000000011"
+	oldest := "00000000-0000-4000-8000-000000000001"
+	if !strings.Contains(body, newest) || strings.Contains(body, oldest) || !strings.Contains(body, `class="more"`) {
+		t.Fatalf("first page %s", body)
+	}
+	second := httptest.NewRecorder()
+	h.history(second, httptest.NewRequest(http.MethodGet, "/history?limit=20", nil))
+	body = second.Body.String()
+	if !strings.Contains(body, oldest) || strings.Contains(body, `class="more"`) {
+		t.Fatalf("second page %s", body)
+	}
+
+	letters := NewDeadLetters()
+	h.letters = letters
+	for i := 0; i < 11; i++ {
+		err := letters.Handle(context.Background(), transfer.Inbound{
+			Topic:     "transfers.dlq",
+			Partition: 0,
+			Offset:    int64(i),
+			Key:       []byte("invalid"),
+			Value:     []byte(fmt.Sprintf(`{"error":"invalid transfer id","raw":"row-%02d"}`, i)),
+			At:        start.Add(time.Duration(i) * time.Second),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	dead := httptest.NewRecorder()
+	h.deadLetters(dead, httptest.NewRequest(http.MethodGet, "/dead-letters", nil))
+	body = dead.Body.String()
+	if !strings.Contains(body, `hx-get="/dead-letters/0-10"`) || strings.Contains(body, `hx-get="/dead-letters/0-0"`) || !strings.Contains(body, `class="more"`) {
+		t.Fatalf("dead first page %s", body)
+	}
+	deadNext := httptest.NewRecorder()
+	h.deadLetters(deadNext, httptest.NewRequest(http.MethodGet, "/dead-letters?limit=20", nil))
+	body = deadNext.Body.String()
+	if !strings.Contains(body, `hx-get="/dead-letters/0-0"`) || strings.Contains(body, `class="more"`) {
+		t.Fatalf("dead second page %s", body)
 	}
 }
 

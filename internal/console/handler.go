@@ -24,7 +24,10 @@ import (
 //go:embed page.html
 var pageFS embed.FS
 
-const historyLimit = 100
+const (
+	pageSize     = 10
+	historyLimit = 100
+)
 
 // Reader loads consumed transfers for the history view.
 type Reader interface {
@@ -120,16 +123,21 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
-	records, err := h.reader.List(r.Context(), historyLimit)
+	limit := pageLimit(r)
+	records, err := h.reader.List(r.Context(), limit+1)
 	if err != nil {
 		http.Error(w, "could not load history", http.StatusInternalServerError)
 		return
+	}
+	more := len(records) > limit
+	if more {
+		records = records[:limit]
 	}
 	rows := make([]rowView, 0, len(records))
 	for _, rec := range records {
 		rows = append(rows, newRow(rec))
 	}
-	h.render(w, "rows", map[string]any{"Records": rows})
+	h.render(w, "rows", map[string]any{"Records": rows, "More": more})
 }
 
 func (h *Handler) detail(w http.ResponseWriter, r *http.Request) {
@@ -165,13 +173,33 @@ func (h *Handler) detail(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "detail", view)
 }
 
-func (h *Handler) deadLetters(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) deadLetters(w http.ResponseWriter, r *http.Request) {
+	limit := pageLimit(r)
 	letters := h.letters.List()
+	more := len(letters) > limit
+	if more {
+		letters = letters[:limit]
+	}
 	views := make([]deadView, 0, len(letters))
 	for _, letter := range letters {
 		views = append(views, newDeadView(letter))
 	}
-	h.render(w, "deadRows", map[string]any{"Letters": views})
+	h.render(w, "deadRows", map[string]any{"Letters": views, "More": more})
+}
+
+func pageLimit(r *http.Request) int {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return pageSize
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return pageSize
+	}
+	if n > historyLimit {
+		return historyLimit
+	}
+	return n
 }
 
 func (h *Handler) deadLetter(w http.ResponseWriter, r *http.Request) {

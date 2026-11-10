@@ -6,6 +6,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Transfer console</title>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script>
+    function maybeMore(scroll, id) {
+      var list = document.getElementById(id);
+      if (!list || list.dataset.loading === "1" || !list.querySelector(".more")) {
+        return;
+      }
+      if (scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 16) {
+        return;
+      }
+      var next = Number(list.dataset.limit || "10") + 10;
+      list.dataset.loading = "1";
+      list.dataset.limit = String(next);
+      htmx.ajax("GET", list.dataset.url, {target: list, swap: "innerHTML", values: {limit: String(next)}}).then(function () {
+        list.dataset.loading = "";
+      }, function () {
+        list.dataset.loading = "";
+      });
+    }
+  </script>
   <style>
     :root { color-scheme: light; }
     body { margin: 0; background: #f3efe6; color: #1d1a16; font: 16px/1.45 "Segoe UI", sans-serif; }
@@ -39,7 +58,9 @@
     ol { list-style: none; padding: 0; margin: 8px 0 0; }
     li { padding: 8px 0; border-bottom: 1px solid #eee6da; }
     #detail, #dead-detail { margin-top: 16px; }
-    h2.split { margin-top: 28px; }
+    .pane-scroll { max-height: 340px; overflow-y: auto; margin-top: 10px; border: 1px solid #eee6da; border-radius: 8px; }
+    .more { height: 8px; }
+    .head.split { margin-top: 28px; }
     .head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
     .head h2 { margin: 0; }
     .head .hint { margin: 0; text-align: right; }
@@ -61,15 +82,22 @@
         <h2>Dead-lettered</h2>
         <p class="hint">The Go receiver writes this error. Kafka only stores the record.</p>
       </div>
-      <p class="hint">The receiver writes here when it will not store a message. The time is when that write reached <span class="mono">transfers.dlq</span>. Select a row for the error and the body. This list refreshes every two seconds.</p>
-      <div id="dead-letters" hx-get="/dead-letters" hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
-        <p class="hint">Loading…</p>
+      <p class="hint">The receiver writes here when it will not store a message. The time is when that write reached <span class="mono">transfers.dlq</span>. Select a row for the error and the body. The latest 10 are shown. Scroll this list to load 10 more.</p>
+      <div id="dead-scroll" class="pane-scroll" onscroll="maybeMore(this, 'dead-letters')">
+        <div id="dead-letters" data-limit="10" data-url="/dead-letters" hx-get="/dead-letters" hx-vals='js:{limit: document.getElementById("dead-letters").dataset.limit}' hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
+          <p class="hint">Loading…</p>
+        </div>
       </div>
       <div id="dead-detail"></div>
-      <h2 class="split">Consumed messages</h2>
-      <p class="hint">Select a row to read its status history. The list refreshes every two seconds.</p>
-      <div id="history" hx-get="/history" hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
-        <p class="hint">Loading…</p>
+      <div class="head split">
+        <h2>Consumed messages</h2>
+        <p class="hint">The Go receiver stores this row in Postgres. Kafka only delivered the record.</p>
+      </div>
+      <p class="hint">Select a row to read its status history. The latest 10 are shown. Scroll this list to load 10 more.</p>
+      <div id="history-scroll" class="pane-scroll" onscroll="maybeMore(this, 'history')">
+        <div id="history" data-limit="10" data-url="/history" hx-get="/history" hx-vals='js:{limit: document.getElementById("history").dataset.limit}' hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
+          <p class="hint">Loading…</p>
+        </div>
       </div>
       <div id="detail"></div>
     </section>
@@ -120,6 +148,7 @@
 {{else}}
 <p class="hint">No consumed messages yet. A send shows up here after the receiver stores it.</p>
 {{end}}
+{{if .More}}<div class="more"></div>{{end}}
 {{end}}
 
 {{define "deadRows"}}
@@ -141,6 +170,7 @@
 {{else}}
 <p class="hint">Nothing dead-lettered yet. Clear the checkbox and send a failing request. It shows up here after the receiver handles it.</p>
 {{end}}
+{{if .More}}<div class="more"></div>{{end}}
 {{end}}
 
 {{define "deadDetail"}}
