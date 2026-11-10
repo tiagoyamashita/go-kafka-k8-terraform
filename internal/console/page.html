@@ -40,6 +40,9 @@
     li { padding: 8px 0; border-bottom: 1px solid #eee6da; }
     #detail, #dead-detail { margin-top: 16px; }
     h2.split { margin-top: 28px; }
+    .head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+    .head h2 { margin: 0; }
+    .head .hint { margin: 0; text-align: right; }
     @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -54,7 +57,10 @@
       <div id="composer">{{template "composer" .Composer}}</div>
     </section>
     <section>
-      <h2>Dead-lettered</h2>
+      <div class="head">
+        <h2>Dead-lettered</h2>
+        <p class="hint">The Go receiver writes this error. Kafka only stores the record.</p>
+      </div>
       <p class="hint">The receiver writes here when it will not store a message. The time is when that write reached <span class="mono">transfers.dlq</span>. Select a row for the error and the body. This list refreshes every two seconds.</p>
       <div id="dead-letters" hx-get="/dead-letters" hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
         <p class="hint">Loading…</p>

@@ -31,6 +31,9 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "Dead-lettered") || !strings.Contains(body, `hx-get="/dead-letters"`) {
 		t.Fatalf("page missing dead-letter list: %s", body)
 	}
+	if !strings.Contains(body, "The Go receiver writes this error. Kafka only stores the record.") {
+		t.Fatalf("page missing dead-letter source: %s", body)
+	}
 }
 
 func TestSelectExampleLoadsTheBody(t *testing.T) {
