@@ -3,6 +3,7 @@ package receiver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -40,6 +41,11 @@ func (s *Service) Handle(ctx context.Context, msg transfer.Inbound) error {
 	))
 	defer span.End()
 
+	if len(msg.Value) > transfer.MaxBodyBytes {
+		err := fmt.Errorf("message is larger than 64KiB")
+		span.RecordError(err)
+		return s.toDLQ(ctx, msg, err)
+	}
 	rec, err := transfer.Parse(msg.Value)
 	if err != nil {
 		span.RecordError(err)

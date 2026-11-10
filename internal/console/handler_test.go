@@ -26,10 +26,10 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "Send") || !strings.Contains(body, "hx-post=\"/messages\"") {
 		t.Fatalf("page missing send form: %s", body)
 	}
-	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") || !strings.Contains(body, "Fail until dead") {
+	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") || !strings.Contains(body, "Fail until dead") || !strings.Contains(body, "Catch the error at") {
 		t.Fatalf("page missing request list: %s", body)
 	}
-	if !strings.Contains(body, "Dead-lettered") || !strings.Contains(body, `hx-get="/dead-letters"`) {
+	if !strings.Contains(body, "Dead-lettered") || !strings.Contains(body, `hx-get="/dead-letters"`) || !strings.Contains(body, "Kafka errors") || !strings.Contains(body, `hx-get="/kafka-errors"`) {
 		t.Fatalf("page missing dead-letter list: %s", body)
 	}
 	if !strings.Contains(body, "The Go receiver writes this error. Kafka only stores the record.") {
@@ -195,6 +195,27 @@ func newTestHandler(t *testing.T, reader Reader, prod *fakeProducer) *Handler {
 	return h
 }
 
+func TestCatchAtChoosesPaneReceiverOrKafka(t *testing.T) {
+	prod := &fakeProducer{}
+	h := newTestHandler(t, store.NewMemory(), prod)
+	over := strings.Repeat("x", transfer.MaxBodyBytes+1)
+
+	pane := postMessage(t, h, over, true)
+	if !strings.Contains(pane.Body.String(), "larger than 64KiB") || len(prod.records) != 0 {
+		t.Fatalf("pane %s produced %d", pane.Body.String(), len(prod.records))
+	}
+
+	receiver := postCatch(t, h, over, "receiver")
+	if !strings.Contains(receiver.Body.String(), "dead-letter") || len(prod.records) != 1 {
+		t.Fatalf("receiver %s produced %d", receiver.Body.String(), len(prod.records))
+	}
+
+	kafka := postCatch(t, h, "not json", "kafka")
+	if !strings.Contains(kafka.Body.String(), "does not check the JSON") || len(prod.records) != 2 {
+		t.Fatalf("kafka %s produced %d", kafka.Body.String(), len(prod.records))
+	}
+}
+
 func TestSendWithoutTheCheckHandsTheBodyToKafka(t *testing.T) {
 	prod := &fakeProducer{}
 	h := newTestHandler(t, store.NewMemory(), prod)
@@ -207,18 +228,25 @@ func TestSendWithoutTheCheckHandsTheBodyToKafka(t *testing.T) {
 	}
 }
 
-func postMessage(t *testing.T, h *Handler, message string, check bool) *httptest.ResponseRecorder {
+func postCatch(t *testing.T, h *Handler, message, catch string) *httptest.ResponseRecorder {
 	t.Helper()
 	form := url.Values{}
 	form.Set("message", message)
-	if check {
-		form.Set("check", "1")
-	}
+	form.Set("catch", catch)
 	req := httptest.NewRequest(http.MethodPost, "/messages", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.send(rec, req)
 	return rec
+}
+
+func postMessage(t *testing.T, h *Handler, message string, check bool) *httptest.ResponseRecorder {
+	t.Helper()
+	catch := "receiver"
+	if check {
+		catch = "pane"
+	}
+	return postCatch(t, h, message, catch)
 }
 
 type produced struct {
@@ -369,5 +397,10 @@ func TestSendReportsABrokerFailure(t *testing.T) {
 	rec := postMessage(t, h, `{"id":"11111111-1111-1111-1111-111111111111","type":"transfer","payload":{"amount":10}}`, true)
 	if !strings.Contains(rec.Body.String(), "broker down") {
 		t.Fatalf("response %s", rec.Body.String())
+	}
+	list := httptest.NewRecorder()
+	h.kafkaErrors(list, httptest.NewRequest(http.MethodGet, "/kafka-errors", nil))
+	if !strings.Contains(list.Body.String(), "broker down") || !strings.Contains(list.Body.String(), "11111111-1111-1111-1111-111111111111") {
+		t.Fatalf("kafka errors %s", list.Body.String())
 	}
 }

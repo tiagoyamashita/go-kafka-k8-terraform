@@ -77,6 +77,10 @@ func Parse(raw []byte) (Record, error) {
 	}, nil
 }
 
+// MaxBodyBytes is the largest inbound record the receiver will store.
+// The transfers.in topic is configured to the same limit, so a larger produce is rejected by the broker.
+const MaxBodyBytes = 64 * 1024
+
 const (
 	// FailOnce refuses the first publish. Later attempts go out.
 	FailOnce = "once"

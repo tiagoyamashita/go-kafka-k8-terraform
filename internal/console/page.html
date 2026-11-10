@@ -112,6 +112,16 @@
       </div>
       <div id="dead-detail"></div>
       <div class="head split">
+        <h2>Kafka errors</h2>
+        <p class="hint">The broker throws these when it rejects the produce.</p>
+      </div>
+      <p class="hint">The text is the error from the produce call. The latest 10 are shown. Scroll this list to load 10 more.</p>
+      <div id="kafka-scroll" class="pane-scroll" onscroll="maybeMore(this, 'kafka-errors')">
+        <div id="kafka-errors" data-limit="10" data-url="/kafka-errors" hx-get="/kafka-errors" hx-vals='js:{limit: document.getElementById("kafka-errors").dataset.limit}' hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
+          <p class="hint">Loading…</p>
+        </div>
+      </div>
+      <div class="head split">
         <h2>Consumed messages</h2>
         <p class="hint">The Go receiver stores this row in Postgres. Kafka only delivered the record.</p>
       </div>
@@ -135,17 +145,17 @@
         <tr>
           <td>A red line in the send pane. Nothing new on the right.</td>
           <td>Send pane</td>
-          <td>Reject invalid messages is checked, and the body is not a JSON object with a UUID id, or it is larger than 64KiB. Kafka is not called.</td>
+          <td>Catch the error at is This pane. The body is not a JSON object with a UUID id, or it is larger than 64KiB. Kafka is not called.</td>
         </tr>
         <tr>
           <td>A green line saying the receiver will dead-letter it. A row under Dead-lettered, and no consumed row.</td>
           <td>Receiver</td>
-          <td>The checkbox is clear and the body still fails that id check. The receiver writes the error to <span class="mono">transfers.dlq</span> and does not store it. Kafka only holds that record.</td>
+          <td>Catch the error at is Receiver. The same bad body, including one larger than 64KiB, is produced. The receiver writes the error to <span class="mono">transfers.dlq</span> and does not store it.</td>
         </tr>
         <tr>
           <td>Kafka did not accept the message.</td>
           <td>Kafka</td>
-          <td>The broker is down, the address is wrong, or the produce is denied. No consumed row and no dead letter.</td>
+          <td>The broker is down, the address is wrong, or the produce is denied. The thrown text is kept under Kafka errors. <span class="mono">transfers.in</span> also rejects a body over 64KiB. Catch the error at Kafka and send Larger than 64KiB. A small body that is not JSON is still accepted by the broker.</td>
         </tr>
         <tr>
           <td>A green Sent line. The id never appears under Consumed messages.</td>
@@ -263,10 +273,13 @@
     {{end}}
   </select>
   <p class="hint">Valid transfer is stored and published. Fail publish once and Fail until dead are stored, then the transmitter refuses them. The other requests fail the id check.</p>
-  <label class="check" for="check">
-    <input id="check" type="checkbox" name="check" value="1" {{if .Check}}checked{{end}}>
-    Reject invalid messages in this pane
-  </label>
+  <label for="catch">Catch the error at</label>
+  <select id="catch" name="catch">
+    <option value="pane" {{if eq .Catch "pane"}}selected{{end}}>This pane</option>
+    <option value="receiver" {{if eq .Catch "receiver"}}selected{{end}}>Receiver</option>
+    <option value="kafka" {{if eq .Catch "kafka"}}selected{{end}}>Kafka</option>
+  </select>
+  <p class="hint">This pane stops a bad body before Kafka. Receiver dead-letters it, including a body over 64KiB. A rejected produce is listed under Kafka errors.</p>
   <label for="message">Message JSON</label>
   <textarea id="message" name="message">{{.Message}}</textarea>
   {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
@@ -316,7 +329,29 @@
   </tbody>
 </table>
 {{else}}
-<p class="hint">Nothing dead-lettered yet. Clear the checkbox and send a failing request. It shows up here after the receiver handles it.</p>
+<p class="hint">Nothing dead-lettered yet. Set Catch the error at to Receiver and send a failing request.</p>
+{{end}}
+{{if .More}}<div class="more"></div>{{end}}
+{{end}}
+
+{{define "kafkaRows"}}
+{{if .Errors}}
+<table>
+  <thead>
+    <tr><th>When</th><th>Error</th><th>Key</th></tr>
+  </thead>
+  <tbody>
+    {{range .Errors}}
+    <tr>
+      <td>{{.At}}</td>
+      <td class="err">{{.Error}}</td>
+      <td class="mono">{{.Key}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="hint">No Kafka error yet. A rejected produce is listed here.</p>
 {{end}}
 {{if .More}}<div class="more"></div>{{end}}
 {{end}}

@@ -69,6 +69,26 @@ func TestHandleDeadLettersInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestHandleDeadLettersAnOversizedBody(t *testing.T) {
+	mem := store.NewMemory()
+	prod := &fakeProducer{}
+	svc := New(mem, prod, "transfers.dlq", nil)
+	body := append([]byte(`{"id":"11111111-1111-1111-1111-111111111111","pad":"`), bytes.Repeat([]byte("x"), transfer.MaxBodyBytes)...)
+	body = append(body, []byte(`"}`)...)
+	if err := svc.Handle(context.Background(), transfer.Inbound{Topic: "transfers.in", Value: body}); err != nil {
+		t.Fatal(err)
+	}
+	if mem.Len() != 0 {
+		t.Fatal("oversized message was stored")
+	}
+	if len(prod.got) != 1 || prod.got[0].topic != "transfers.dlq" {
+		t.Fatalf("dlq %#v", prod.got)
+	}
+	if !bytes.Contains(prod.got[0].value, []byte("larger than 64KiB")) {
+		t.Fatalf("dlq body %s", prod.got[0].value)
+	}
+}
+
 func TestHandleLeavesOffsetUncommittedWhenDLQFails(t *testing.T) {
 	prod := &fakeProducer{fail: map[string]int{"transfers.dlq": 1}}
 	svc := New(store.NewMemory(), prod, "transfers.dlq", nil)

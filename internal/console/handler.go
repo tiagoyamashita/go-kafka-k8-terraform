@@ -37,11 +37,12 @@ type Reader interface {
 
 // Handler serves the send form and the consumed-message history.
 type Handler struct {
-	producer kafka.Producer
-	reader   Reader
-	letters  *DeadLetters
-	topic    string
-	tmpl     *template.Template
+	producer  kafka.Producer
+	reader    Reader
+	letters   *DeadLetters
+	kafkaErrs *KafkaErrors
+	topic     string
+	tmpl      *template.Template
 }
 
 // New parses the page templates. letters may be nil, in which case the dead-letter list stays empty.
@@ -53,7 +54,7 @@ func New(producer kafka.Producer, reader Reader, topic string, letters *DeadLett
 	if letters == nil {
 		letters = NewDeadLetters()
 	}
-	return &Handler{producer: producer, reader: reader, letters: letters, topic: topic, tmpl: tmpl}, nil
+	return &Handler{producer: producer, reader: reader, letters: letters, kafkaErrs: NewKafkaErrors(), topic: topic, tmpl: tmpl}, nil
 }
 
 // Register mounts the console routes.
@@ -65,11 +66,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /history/{id}", h.detail)
 	mux.HandleFunc("GET /dead-letters", h.deadLetters)
 	mux.HandleFunc("GET /dead-letters/{id}", h.deadLetter)
+	mux.HandleFunc("GET /kafka-errors", h.kafkaErrors)
 }
 
 func (h *Handler) page(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "page", map[string]any{
-		"Composer": newComposer(sampleMessage(), "", "", validExampleID, true),
+		"Composer": newComposer(sampleMessage(), "", "", validExampleID, catchPane),
 	})
 }
 
@@ -80,40 +82,53 @@ func (h *Handler) loadExample(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.render(w, "composer", newComposer(ex.text(), "", "", ex.ID, r.URL.Query().Get("check") == "1"))
+	h.render(w, "composer", newComposer(ex.text(), "", "", ex.ID, normalizeCatch(r.URL.Query().Get("catch"))))
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.render(w, "composer", newComposer("", "The form could not be read.", "", validExampleID, true))
+		h.render(w, "composer", newComposer("", "The form could not be read.", "", validExampleID, catchPane))
 		return
 	}
 	selected := r.FormValue("example")
-	check := r.FormValue("check") == "1"
+	catch := normalizeCatch(r.FormValue("catch"))
 	raw := strings.TrimSpace(r.FormValue("message"))
-	if len(raw) > 64*1024 {
-		h.render(w, "composer", newComposer(raw, "The message is larger than 64KiB.", "", selected, check))
+	if len(raw) > 2*1024*1024 {
+		h.render(w, "composer", newComposer("", "The message is larger than 2MiB.", "", selected, catch))
 		return
 	}
 	rec, err := transfer.Parse([]byte(raw))
-	if err != nil && check {
-		h.render(w, "composer", newComposer(raw, "The message must be a JSON object with a UUID id.", "", selected, check))
+	over := len(raw) > transfer.MaxBodyBytes
+	if catch == catchPane && over {
+		h.render(w, "composer", newComposer(raw, "The message is larger than 64KiB.", "", selected, catch))
+		return
+	}
+	if catch == catchPane && err != nil {
+		h.render(w, "composer", newComposer(raw, "The message must be a JSON object with a UUID id.", "", selected, catch))
 		return
 	}
 	key := "invalid"
 	sentID := ""
 	note := "Sent to transfers.in. The receiver will dead-letter it. The time and the error show under Dead-lettered."
-	if err == nil {
+	if err == nil && !over {
 		key = rec.ID
 		sentID = rec.ID
 		note = transfer.FailureNote([]byte(raw))
 	}
+	if catch == catchKafka && err != nil && !over {
+		note = "Kafka accepted the record. It does not check the JSON. The receiver will dead-letter it."
+	}
+	if catch == catchKafka && over {
+		note = "Kafka accepted a body over 64KiB. The transfers.in topic limit usually rejects that produce first."
+	}
 	if err := h.producer.Produce(r.Context(), h.topic, key, []byte(raw)); err != nil {
-		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected, check))
+		h.kafkaErrs.Add(key, err.Error())
+		w.Header().Set("HX-Trigger", "refresh-history")
+		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected, catch))
 		return
 	}
 	w.Header().Set("HX-Trigger", "refresh-history")
-	data := newComposer(sampleMessage(), "", sentID, validExampleID, check)
+	data := newComposer(sampleMessage(), "", sentID, validExampleID, catch)
 	data.Note = note
 	h.render(w, "composer", data)
 }
@@ -181,6 +196,24 @@ func (h *Handler) deadLetters(w http.ResponseWriter, r *http.Request) {
 		views = append(views, newDeadView(letter))
 	}
 	h.render(w, "deadRows", map[string]any{"Letters": views, "More": more})
+}
+
+func (h *Handler) kafkaErrors(w http.ResponseWriter, r *http.Request) {
+	limit := pageLimit(r)
+	items := h.kafkaErrs.List()
+	more := len(items) > limit
+	if more {
+		items = items[:limit]
+	}
+	views := make([]kafkaErrorView, 0, len(items))
+	for _, item := range items {
+		views = append(views, kafkaErrorView{
+			At:    stamp(item.At),
+			Key:   item.Key,
+			Error: item.Error,
+		})
+	}
+	h.render(w, "kafkaRows", map[string]any{"Errors": views, "More": more})
 }
 
 func pageLimit(r *http.Request) int {
@@ -259,12 +292,15 @@ var requestExamples = []requestExample{
 	{ID: "number-id", Label: "id is a number", Body: `{"id":1}`},
 	{ID: "string", Label: "Bare string", Body: `"just a string"`},
 	{ID: "truncated", Label: "Truncated JSON", Body: `{"id":"11111111-1111-1111-1111-111111111111"`},
+	{ID: "oversize", Label: "Larger than 64KiB"},
 }
 
 func (ex requestExample) text() string {
 	switch {
 	case ex.ID == validExampleID:
 		return sampleMessage()
+	case ex.ID == "oversize":
+		return strings.Repeat("x", transfer.MaxBodyBytes+1)
 	case ex.Fail != "":
 		return failMessage(ex.Fail)
 	default:
@@ -292,11 +328,26 @@ type composerData struct {
 	Error    string
 	SentID   string
 	Note     string
-	Check    bool
+	Catch    string
 	Examples []exampleView
 }
 
-func newComposer(message, errText, sentID, selected string, check bool) composerData {
+const (
+	catchPane     = "pane"
+	catchReceiver = "receiver"
+	catchKafka    = "kafka"
+)
+
+func normalizeCatch(v string) string {
+	switch v {
+	case catchReceiver, catchKafka:
+		return v
+	default:
+		return catchPane
+	}
+}
+
+func newComposer(message, errText, sentID, selected, catch string) composerData {
 	if selected == "" {
 		selected = validExampleID
 	}
@@ -308,9 +359,15 @@ func newComposer(message, errText, sentID, selected string, check bool) composer
 		Message:  message,
 		Error:    errText,
 		SentID:   sentID,
-		Check:    check,
+		Catch:    normalizeCatch(catch),
 		Examples: views,
 	}
+}
+
+type kafkaErrorView struct {
+	At    string
+	Key   string
+	Error string
 }
 
 type rowView struct {

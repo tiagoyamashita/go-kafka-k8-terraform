@@ -19,3 +19,7 @@ for topic in transfers.in transfers.out transfers.dlq; do
     --partitions 3 \
     --replication-factor 1
 done
+/opt/kafka/bin/kafka-configs.sh \
+  --bootstrap-server kafka-0.kafka:9092 \
+  --alter --entity-type topics --entity-name transfers.in \
+  --add-config max.message.bytes=65536
