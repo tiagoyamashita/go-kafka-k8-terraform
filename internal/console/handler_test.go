@@ -41,6 +41,9 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, `id="dead-scroll"`) || !strings.Contains(body, `id="history-scroll"`) {
 		t.Fatalf("page missing independent scrolls: %s", body)
 	}
+	if !strings.Contains(body, "Common Failures") || !strings.Contains(body, "Who decides") || !strings.Contains(body, "transfers.out") {
+		t.Fatalf("page missing failure guide: %s", body)
+	}
 }
 
 func TestSelectExampleLoadsTheBody(t *testing.T) {

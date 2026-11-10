@@ -64,6 +64,17 @@
     .head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
     .head h2 { margin: 0; }
     .head .hint { margin: 0; text-align: right; }
+    .tab-input { position: absolute; opacity: 0; pointer-events: none; }
+    .tabbar { display: flex; gap: 8px; padding: 18px 32px 0; }
+    .tabbar label { display: inline-block; margin: 0; padding: 8px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 14px; }
+    #tab-console:checked ~ .tabbar label[for="tab-console"],
+    #tab-failures:checked ~ .tabbar label[for="tab-failures"] { background: #fffdf8; border-color: #e2dbcf; }
+    .panel { display: none; }
+    #tab-console:checked ~ main.panel { display: grid; }
+    #tab-failures:checked ~ section.failures { display: block; }
+    .failures { margin: 0 32px 48px; }
+    .guide tbody tr { cursor: default; }
+    .guide tbody tr:hover { background: transparent; }
     @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -72,7 +83,13 @@
     <h1>Transfer console</h1>
     <p>Send a JSON message to <span class="mono">transfers.in</span>. Stored messages and dead letters show on the right.</p>
   </header>
-  <main>
+  <input class="tab-input" type="radio" name="tab" id="tab-console" checked>
+  <input class="tab-input" type="radio" name="tab" id="tab-failures">
+  <nav class="tabbar">
+    <label for="tab-console">Transfer console</label>
+    <label for="tab-failures">Common Failures</label>
+  </nav>
+  <main class="panel">
     <section>
       <h2>Send</h2>
       <div id="composer">{{template "composer" .Composer}}</div>
@@ -102,6 +119,67 @@
       <div id="detail"></div>
     </section>
   </main>
+  <section class="panel failures">
+    <h2>Common Failures</h2>
+    <p class="hint">What you see, who decides it, and the situation that produces it. A Demo note in the last column can be forced from the request list.</p>
+    <table class="guide">
+      <thead>
+        <tr><th>What you see</th><th>Who decides</th><th>When it happens</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>A red line in the send pane. Nothing new on the right.</td>
+          <td>Send pane</td>
+          <td>Reject invalid messages is checked, and the body is not a JSON object with a UUID id, or it is larger than 64KiB. Kafka is not called.</td>
+        </tr>
+        <tr>
+          <td>A green line saying the receiver will dead-letter it. A row under Dead-lettered, and no consumed row.</td>
+          <td>Receiver</td>
+          <td>The checkbox is clear and the body still fails that id check. The receiver writes the error to <span class="mono">transfers.dlq</span> and does not store it. Kafka only holds that record.</td>
+        </tr>
+        <tr>
+          <td>Kafka did not accept the message.</td>
+          <td>Kafka</td>
+          <td>The broker is down, the address is wrong, or the produce is denied. No consumed row and no dead letter.</td>
+        </tr>
+        <tr>
+          <td>A green Sent line. The id never appears under Consumed messages.</td>
+          <td>Receiver</td>
+          <td>The receiver is stopped, or Postgres refused the insert. The record stays on <span class="mono">transfers.in</span>. A store error is not dead-lettered.</td>
+        </tr>
+        <tr>
+          <td>A green Sent line for an id that is already listed. Still one row.</td>
+          <td>Receiver</td>
+          <td>The same UUID was produced again. The insert is skipped.</td>
+        </tr>
+        <tr>
+          <td>The consumed row stays <span class="status status-received">received</span>.</td>
+          <td>Transmitter</td>
+          <td>The transmitter is stopped or not polling. The row is stored, and nothing has tried <span class="mono">transfers.out</span>.</td>
+        </tr>
+        <tr>
+          <td>The row goes <span class="status status-failed">failed</span>, then <span class="status status-published">published</span>.</td>
+          <td>Transmitter or Kafka</td>
+          <td>One publish to <span class="mono">transfers.out</span> fails and a later one succeeds. A short broker blip or a single rejected produce. Demo: Fail publish once.</td>
+        </tr>
+        <tr>
+          <td>The row stays <span class="status status-failed">failed</span>, then becomes <span class="status status-dead">dead</span>. The body also shows under Dead-lettered.</td>
+          <td>Transmitter</td>
+          <td>Every publish to <span class="mono">transfers.out</span> fails until the attempt cap, five tries about two seconds apart. The topic is missing, access is denied, the record is over the broker limit, or the broker stays down. Demo: Fail until dead. A real sender does not send <span class="mono">"fail": "always"</span>.</td>
+        </tr>
+        <tr>
+          <td>The row stays <span class="status status-failed">failed</span> after the attempt cap and does not become dead.</td>
+          <td>Transmitter</td>
+          <td>The cap was reached, and the write to <span class="mono">transfers.dlq</span> failed too. It becomes <span class="status status-dead">dead</span> only after that write succeeds.</td>
+        </tr>
+        <tr>
+          <td>The row is stored and published even though a business field looks wrong.</td>
+          <td>Nobody rejects it</td>
+          <td>The receiver only requires a JSON object with a UUID id. A string amount, or a payload that is not an object, is stored as sent.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
 </body>
 </html>
 {{end}}
