@@ -155,7 +155,7 @@
         <tr>
           <td>Kafka did not accept the message.</td>
           <td>Kafka</td>
-          <td>The broker is down, the address is wrong, or the produce is denied. The thrown text is kept under Kafka errors. Leave the checkbox unchecked and send Kafka: message too large. That text does not compress, so <span class="mono">transfers.in</span> refuses it. Receiver: larger than 64KiB is only the letter x, which compresses under the limit, so Kafka accepts it.</td>
+          <td>The broker is down, the address is wrong, the topic is missing or invalid, or the client speaks SASL to the plaintext listener. The thrown text is kept under Kafka errors. Leave the checkbox unchecked and send one of the Kafka requests. Kafka: message too large does not compress, so <span class="mono">transfers.in</span> refuses it. Receiver: larger than 64KiB is only the letter x, which compresses under the limit, so Kafka accepts it.</td>
         </tr>
         <tr>
           <td>A green Sent line. The id never appears under Consumed messages.</td>
@@ -272,7 +272,7 @@
     <option value="{{.ID}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>
     {{end}}
   </select>
-  <p class="hint">Valid transfer is stored and published. Fail publish once and Fail until dead are stored, then the transmitter refuses them. Receiver requests are dead-lettered by the receiver. Kafka: message too large is random text the broker refuses.</p>
+  <p class="hint">Valid transfer is stored and published. Fail publish once and Fail until dead are stored, then the transmitter refuses them. Receiver requests are dead-lettered by the receiver. Kafka requests are refused by the broker: the body is too large, the topic is unknown or invalid, the address is wrong, the broker cannot be reached, or SASL is rejected.</p>
   <label class="check" for="front"><input type="checkbox" id="front" name="front" value="1" {{if .Front}}checked{{end}}> Catch it on the front end</label>
   <p class="hint">Checked, a bad body stops here and Kafka is not called. Unchecked, a Receiver request is dead-lettered by the receiver, and Kafka: message too large is refused by the broker.</p>
   <label for="message">Message JSON</label>

@@ -26,7 +26,7 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "Send") || !strings.Contains(body, "hx-post=\"/messages\"") {
 		t.Fatalf("page missing send form: %s", body)
 	}
-	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Receiver: missing id") || !strings.Contains(body, "Fail until dead") || !strings.Contains(body, "Kafka: message too large") || !strings.Contains(body, "Catch it on the front end") {
+	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Receiver: missing id") || !strings.Contains(body, "Fail until dead") || !strings.Contains(body, "Kafka: message too large") || !strings.Contains(body, "Kafka: unknown topic") || !strings.Contains(body, "Kafka: SASL rejected") || !strings.Contains(body, "Catch it on the front end") {
 		t.Fatalf("page missing request list: %s", body)
 	}
 	if !strings.Contains(body, "Dead-lettered") || !strings.Contains(body, `hx-get="/dead-letters"`) || !strings.Contains(body, "Kafka errors") || !strings.Contains(body, `hx-get="/kafka-errors"`) {
@@ -444,4 +444,40 @@ func TestBrokerRejectExampleIsRefusedByKafka(t *testing.T) {
 	if !strings.Contains(loaded.Body.String(), `value="broker-reject" selected`) || !strings.Contains(loaded.Body.String(), `value="1" checked`) {
 		t.Fatalf("example %s", loaded.Body.String()[:400])
 	}
+}
+
+func TestKafkaRequestsTargetTheBrokerFailure(t *testing.T) {
+	prod := &fakeProducer{}
+	h := newTestHandler(t, store.NewMemory(), prod)
+	body := `{"id":"11111111-1111-1111-1111-111111111111","type":"transfer"}`
+	postExample(t, h, kafkaUnknownID, body)
+	postExample(t, h, kafkaInvalidID, body)
+	if len(prod.records) != 2 || prod.records[0].topic != "transfers.missing" || prod.records[1].topic != "bad topic" {
+		t.Fatalf("produced %#v", prod.records)
+	}
+
+	h.demonstrate = func(_ context.Context, mode string) error {
+		return fmt.Errorf("dial %s", mode)
+	}
+	wrong := postExample(t, h, kafkaWrongID, body)
+	if !strings.Contains(wrong.Body.String(), "dial wrong-address") || len(prod.records) != 2 {
+		t.Fatalf("wrong address %s produced %d", wrong.Body.String(), len(prod.records))
+	}
+	list := httptest.NewRecorder()
+	h.kafkaErrors(list, httptest.NewRequest(http.MethodGet, "/kafka-errors", nil))
+	if !strings.Contains(list.Body.String(), "dial wrong-address") {
+		t.Fatalf("kafka errors %s", list.Body.String())
+	}
+}
+
+func postExample(t *testing.T, h *Handler, example, message string) *httptest.ResponseRecorder {
+	t.Helper()
+	form := url.Values{}
+	form.Set("example", example)
+	form.Set("message", message)
+	req := httptest.NewRequest(http.MethodPost, "/messages", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.send(rec, req)
+	return rec
 }

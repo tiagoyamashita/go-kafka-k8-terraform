@@ -39,12 +39,14 @@ type Reader interface {
 
 // Handler serves the send form and the consumed-message history.
 type Handler struct {
-	producer  kafka.Producer
-	reader    Reader
-	letters   *DeadLetters
-	kafkaErrs *KafkaErrors
-	topic     string
-	tmpl      *template.Template
+	producer    kafka.Producer
+	reader      Reader
+	letters     *DeadLetters
+	kafkaErrs   *KafkaErrors
+	topic       string
+	brokers     []string
+	demonstrate func(context.Context, string) error
+	tmpl        *template.Template
 }
 
 // New parses the page templates. letters may be nil, in which case the dead-letter list stays empty.
@@ -57,6 +59,11 @@ func New(producer kafka.Producer, reader Reader, topic string, letters *DeadLett
 		letters = NewDeadLetters()
 	}
 	return &Handler{producer: producer, reader: reader, letters: letters, kafkaErrs: NewKafkaErrors(), topic: topic, tmpl: tmpl}, nil
+}
+
+// SetBrokers is the cluster address used by the SASL failure example.
+func (h *Handler) SetBrokers(brokers []string) {
+	h.brokers = append([]string(nil), brokers...)
 }
 
 // Register mounts the console routes.
@@ -117,7 +124,22 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 		sentID = rec.ID
 		note = transfer.FailureNote([]byte(raw))
 	}
-	if err := h.producer.Produce(r.Context(), h.topic, key, []byte(raw)); err != nil {
+	if mode, ok := kafkaDialMode(selected); ok {
+		if err := h.dialFailure(r.Context(), mode); err != nil {
+			h.kafkaErrs.Add(key, err.Error())
+			w.Header().Set("HX-Trigger", "refresh-history")
+			h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected, front))
+			return
+		}
+	}
+	topic := h.topic
+	switch selected {
+	case kafkaUnknownID:
+		topic = "transfers.missing"
+	case kafkaInvalidID:
+		topic = "bad topic"
+	}
+	if err := h.producer.Produce(r.Context(), topic, key, []byte(raw)); err != nil {
 		h.kafkaErrs.Add(key, err.Error())
 		w.Header().Set("HX-Trigger", "refresh-history")
 		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected, front))
@@ -266,6 +288,31 @@ func (h *Handler) render(w http.ResponseWriter, name string, data any) {
 const validExampleID = "valid"
 
 const brokerRejectID = "broker-reject"
+const kafkaUnknownID = "kafka-unknown"
+const kafkaInvalidID = "kafka-invalid"
+const kafkaWrongID = "kafka-wrong-address"
+const kafkaUnreachableID = "kafka-unreachable"
+const kafkaSASLID = "kafka-sasl"
+
+func kafkaDialMode(id string) (string, bool) {
+	switch id {
+	case kafkaWrongID:
+		return "wrong-address", true
+	case kafkaUnreachableID:
+		return "broker-unreachable", true
+	case kafkaSASLID:
+		return "sasl-rejected", true
+	default:
+		return "", false
+	}
+}
+
+func (h *Handler) dialFailure(ctx context.Context, mode string) error {
+	if h.demonstrate != nil {
+		return h.demonstrate(ctx, mode)
+	}
+	return kafka.Demonstrate(ctx, h.brokers, mode)
+}
 
 type requestExample struct {
 	ID    string
@@ -277,7 +324,7 @@ type requestExample struct {
 // requestExamples is the send-pane list. Valid transfer is published.
 // The fail entries are stored, then the transmitter refuses them.
 // Receiver entries are dead-lettered by the receiver.
-// The Kafka entry is random text the broker will not store.
+// The Kafka entries are produces this broker rejects.
 var requestExamples = []requestExample{
 	{ID: validExampleID, Label: "Valid transfer"},
 	{ID: "fail-once", Label: "Fail publish once", Fail: transfer.FailOnce},
@@ -293,6 +340,11 @@ var requestExamples = []requestExample{
 	{ID: "truncated", Label: "Receiver: truncated JSON", Body: `{"id":"11111111-1111-1111-1111-111111111111"`},
 	{ID: "oversize", Label: "Receiver: larger than 64KiB"},
 	{ID: brokerRejectID, Label: "Kafka: message too large"},
+	{ID: kafkaUnknownID, Label: "Kafka: unknown topic"},
+	{ID: kafkaInvalidID, Label: "Kafka: invalid topic"},
+	{ID: kafkaWrongID, Label: "Kafka: wrong address"},
+	{ID: kafkaUnreachableID, Label: "Kafka: broker unreachable"},
+	{ID: kafkaSASLID, Label: "Kafka: SASL rejected"},
 }
 
 func (ex requestExample) text() string {
@@ -303,6 +355,8 @@ func (ex requestExample) text() string {
 		return strings.Repeat("x", transfer.MaxBodyBytes+1)
 	case ex.ID == brokerRejectID:
 		return brokerRejectBody()
+	case ex.ID == kafkaUnknownID || ex.ID == kafkaInvalidID || ex.ID == kafkaWrongID || ex.ID == kafkaUnreachableID || ex.ID == kafkaSASLID:
+		return sampleMessage()
 	case ex.Fail != "":
 		return failMessage(ex.Fail)
 	default:

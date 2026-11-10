@@ -54,6 +54,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	ui.SetBrokers(cfg.Kafka.Brokers())
 	// A new group on each start reads the topic from the beginning into the pane.
 	// The receiver group must stay untouched.
 	dlqClient, err := kafka.NewClient(cfg.Kafka,
