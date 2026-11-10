@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wovenbytoyota/go-kafka-k8-terraform/internal/store"
 	"github.com/wovenbytoyota/go-kafka-k8-terraform/internal/transfer"
@@ -26,6 +27,9 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	}
 	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") {
 		t.Fatalf("page missing request list: %s", body)
+	}
+	if !strings.Contains(body, "Dead-lettered") || !strings.Contains(body, `hx-get="/dead-letters"`) {
+		t.Fatalf("page missing dead-letter list: %s", body)
 	}
 }
 
@@ -141,7 +145,7 @@ func TestDetailUnknownID(t *testing.T) {
 
 func newTestHandler(t *testing.T, reader Reader, prod *fakeProducer) *Handler {
 	t.Helper()
-	h, err := New(prod, reader, "transfers.in")
+	h, err := New(prod, reader, "transfers.in", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +195,63 @@ func (f *fakeProducer) Produce(_ context.Context, topic, key string, value []byt
 	}
 	f.records = append(f.records, produced{topic: topic, key: key, value: append([]byte(nil), value...)})
 	return nil
+}
+
+func TestDeadLetterPaneShowsWhenTheReceiverWroteIt(t *testing.T) {
+	letters := NewDeadLetters()
+	h, err := New(&fakeProducer{}, store.NewMemory(), "transfers.in", letters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	when := time.Date(2026, 11, 10, 7, 5, 0, 0, time.UTC)
+	body := []byte(`{"error":"invalid transfer id","message":{"id":"nope"}}`)
+	msg := transfer.Inbound{Topic: "transfers.dlq", Partition: 0, Offset: 3, Key: []byte("invalid"), Value: body, At: when}
+	if err := letters.Handle(context.Background(), msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := letters.Handle(context.Background(), msg); err != nil {
+		t.Fatal(err)
+	}
+	if got := letters.List(); len(got) != 1 {
+		t.Fatalf("len %d", len(got))
+	}
+
+	list := httptest.NewRecorder()
+	h.deadLetters(list, httptest.NewRequest(http.MethodGet, "/dead-letters", nil))
+	text := list.Body.String()
+	if !strings.Contains(text, "invalid transfer id") || !strings.Contains(text, stamp(when)) || !strings.Contains(text, `hx-get="/dead-letters/0-3"`) {
+		t.Fatalf("list %s", text)
+	}
+
+	detail := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/dead-letters/0-3", nil)
+	req.SetPathValue("id", "0-3")
+	h.deadLetter(detail, req)
+	if !strings.Contains(detail.Body.String(), "nope") || !strings.Contains(detail.Body.String(), "transfers.dlq:0:3") {
+		t.Fatalf("detail %s", detail.Body.String())
+	}
+
+	raw := []byte(`{"error":"message is not json","raw":"not json"}`)
+	if err := letters.Handle(context.Background(), transfer.Inbound{
+		Topic: "transfers.dlq", Partition: 1, Offset: 1, Key: []byte("invalid"), Value: raw, At: when.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rawDetail := httptest.NewRecorder()
+	rawReq := httptest.NewRequest(http.MethodGet, "/dead-letters/1-1", nil)
+	rawReq.SetPathValue("id", "1-1")
+	h.deadLetter(rawDetail, rawReq)
+	if !strings.Contains(rawDetail.Body.String(), "message is not json") || !strings.Contains(rawDetail.Body.String(), "not json") {
+		t.Fatalf("raw detail %s", rawDetail.Body.String())
+	}
+
+	missing := httptest.NewRecorder()
+	missingReq := httptest.NewRequest(http.MethodGet, "/dead-letters/9-9", nil)
+	missingReq.SetPathValue("id", "9-9")
+	h.deadLetter(missing, missingReq)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("status %d", missing.Code)
+	}
 }
 
 func TestSendReportsABrokerFailure(t *testing.T) {

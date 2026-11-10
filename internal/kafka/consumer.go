@@ -45,6 +45,7 @@ func Consume(ctx context.Context, client *kgo.Client, handler Handler) error {
 				Offset:    rec.Offset,
 				Key:       append([]byte(nil), rec.Key...),
 				Value:     append([]byte(nil), rec.Value...),
+				At:        rec.Timestamp,
 			})
 			if err != nil {
 				slog.ErrorContext(msgCtx, "handle message", "topic", rec.Topic, "partition", rec.Partition, "offset", rec.Offset, "err", err)

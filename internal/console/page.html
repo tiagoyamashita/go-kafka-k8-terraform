@@ -38,14 +38,15 @@
     pre { white-space: pre-wrap; word-break: break-word; background: #f7f3ea; padding: 12px; border-radius: 8px; font: 13px/1.45 Consolas, monospace; }
     ol { list-style: none; padding: 0; margin: 8px 0 0; }
     li { padding: 8px 0; border-bottom: 1px solid #eee6da; }
-    #detail { margin-top: 16px; }
+    #detail, #dead-detail { margin-top: 16px; }
+    h2.split { margin-top: 28px; }
     @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <header>
     <h1>Transfer console</h1>
-    <p>Send a JSON message to <span class="mono">transfers.in</span>. The history is what the receiver has stored in Postgres.</p>
+    <p>Send a JSON message to <span class="mono">transfers.in</span>. Stored messages and dead letters show on the right.</p>
   </header>
   <main>
     <section>
@@ -53,7 +54,13 @@
       <div id="composer">{{template "composer" .Composer}}</div>
     </section>
     <section>
-      <h2>Consumed messages</h2>
+      <h2>Dead-lettered</h2>
+      <p class="hint">The receiver writes here when it will not store a message. The time is when that write reached <span class="mono">transfers.dlq</span>. Select a row for the error and the body. This list refreshes every two seconds.</p>
+      <div id="dead-letters" hx-get="/dead-letters" hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
+        <p class="hint">Loading…</p>
+      </div>
+      <div id="dead-detail"></div>
+      <h2 class="split">Consumed messages</h2>
       <p class="hint">Select a row to read its status history. The list refreshes every two seconds.</p>
       <div id="history" hx-get="/history" hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
         <p class="hint">Loading…</p>
@@ -107,6 +114,35 @@
 {{else}}
 <p class="hint">No consumed messages yet. A send shows up here after the receiver stores it.</p>
 {{end}}
+{{end}}
+
+{{define "deadRows"}}
+{{if .Letters}}
+<table>
+  <thead>
+    <tr><th>When</th><th>Error</th><th>Key</th></tr>
+  </thead>
+  <tbody>
+    {{range .Letters}}
+    <tr hx-get="/dead-letters/{{.ID}}" hx-target="#dead-detail" hx-swap="innerHTML">
+      <td>{{.At}}</td>
+      <td>{{.Error}}</td>
+      <td class="mono">{{.Key}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="hint">Nothing dead-lettered yet. Clear the checkbox and send a failing request. It shows up here after the receiver handles it.</p>
+{{end}}
+{{end}}
+
+{{define "deadDetail"}}
+<h2>Dead letter</h2>
+<p>{{.At}}</p>
+<p class="err">{{.Error}}</p>
+<p class="mono">{{.Key}} · {{.Place}}</p>
+<pre>{{.Body}}</pre>
 {{end}}
 
 {{define "detail"}}

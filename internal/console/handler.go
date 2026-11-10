@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,17 +36,21 @@ type Reader interface {
 type Handler struct {
 	producer kafka.Producer
 	reader   Reader
+	letters  *DeadLetters
 	topic    string
 	tmpl     *template.Template
 }
 
-// New parses the page templates.
-func New(producer kafka.Producer, reader Reader, topic string) (*Handler, error) {
+// New parses the page templates. letters may be nil, in which case the dead-letter list stays empty.
+func New(producer kafka.Producer, reader Reader, topic string, letters *DeadLetters) (*Handler, error) {
 	tmpl, err := template.ParseFS(pageFS, "page.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse console templates: %w", err)
 	}
-	return &Handler{producer: producer, reader: reader, topic: topic, tmpl: tmpl}, nil
+	if letters == nil {
+		letters = NewDeadLetters()
+	}
+	return &Handler{producer: producer, reader: reader, letters: letters, topic: topic, tmpl: tmpl}, nil
 }
 
 // Register mounts the console routes.
@@ -55,6 +60,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /messages", h.send)
 	mux.HandleFunc("GET /history", h.history)
 	mux.HandleFunc("GET /history/{id}", h.detail)
+	mux.HandleFunc("GET /dead-letters", h.deadLetters)
+	mux.HandleFunc("GET /dead-letters/{id}", h.deadLetter)
 }
 
 func (h *Handler) page(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +103,7 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	}
 	key := "invalid"
 	sentID := ""
-	note := "Sent to transfers.in. The receiver will dead-letter it instead of storing it."
+	note := "Sent to transfers.in. The receiver will dead-letter it. The time and the error show under Dead-lettered."
 	if err == nil {
 		key = rec.ID
 		sentID = rec.ID
@@ -156,6 +163,41 @@ func (h *Handler) detail(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	h.render(w, "detail", view)
+}
+
+func (h *Handler) deadLetters(w http.ResponseWriter, _ *http.Request) {
+	letters := h.letters.List()
+	views := make([]deadView, 0, len(letters))
+	for _, letter := range letters {
+		views = append(views, newDeadView(letter))
+	}
+	h.render(w, "deadRows", map[string]any{"Letters": views})
+}
+
+func (h *Handler) deadLetter(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validDeadLetterID(id) {
+		http.NotFound(w, r)
+		return
+	}
+	letter, ok := h.letters.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	h.render(w, "deadDetail", newDeadView(letter))
+}
+
+func validDeadLetterID(id string) bool {
+	part, off, ok := strings.Cut(id, "-")
+	if !ok || part == "" || off == "" {
+		return false
+	}
+	if _, err := strconv.Atoi(part); err != nil {
+		return false
+	}
+	_, err := strconv.Atoi(off)
+	return err == nil
 }
 
 func (h *Handler) render(w http.ResponseWriter, name string, data any) {

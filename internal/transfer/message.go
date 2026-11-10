@@ -50,6 +50,7 @@ type Inbound struct {
 	Offset    int64
 	Key       []byte
 	Value     []byte
+	At        time.Time
 }
 
 // Parse checks that the Kafka value is a JSON object with a UUID id and returns

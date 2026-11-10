@@ -10,6 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/twmb/franz-go/pkg/kgo"
+
 	"github.com/wovenbytoyota/go-kafka-k8-terraform/internal/config"
 	"github.com/wovenbytoyota/go-kafka-k8-terraform/internal/console"
 	"github.com/wovenbytoyota/go-kafka-k8-terraform/internal/kafka"
@@ -46,10 +49,30 @@ func run() error {
 	}
 	defer client.Close()
 
-	ui, err := console.New(kafka.NewProducer(client), store.NewPostgres(pool), cfg.Kafka.InboundTopic)
+	letters := console.NewDeadLetters()
+	ui, err := console.New(kafka.NewProducer(client), store.NewPostgres(pool), cfg.Kafka.InboundTopic, letters)
 	if err != nil {
 		return err
 	}
+	// A new group on each start reads the topic from the beginning into the pane.
+	// The receiver group must stay untouched.
+	dlqClient, err := kafka.NewClient(cfg.Kafka,
+		kgo.ConsumerGroup("transfer-console-"+uuid.NewString()),
+		kgo.ConsumeTopics(cfg.Kafka.DLQTopic),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.DisableAutoCommit(),
+		kgo.Balancers(kgo.CooperativeStickyBalancer()),
+	)
+	if err != nil {
+		return err
+	}
+	defer dlqClient.Close()
+	go func() {
+		err := kafka.Consume(ctx, dlqClient, letters)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("dead-letter watch stopped", "err", err)
+		}
+	}()
 
 	mux := http.NewServeMux()
 	ui.Register(mux)
@@ -63,6 +86,10 @@ func run() error {
 			return
 		}
 		if err := client.Ping(r.Context()); err != nil {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		if err := dlqClient.Ping(r.Context()); err != nil {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
