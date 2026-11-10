@@ -68,11 +68,14 @@
     .tabbar { display: flex; gap: 8px; padding: 18px 32px 0; }
     .tabbar label { display: inline-block; margin: 0; padding: 8px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 14px; }
     #tab-console:checked ~ .tabbar label[for="tab-console"],
-    #tab-failures:checked ~ .tabbar label[for="tab-failures"] { background: #fffdf8; border-color: #e2dbcf; }
+    #tab-failures:checked ~ .tabbar label[for="tab-failures"],
+    #tab-debug:checked ~ .tabbar label[for="tab-debug"] { background: #fffdf8; border-color: #e2dbcf; }
     .panel { display: none; }
     #tab-console:checked ~ main.panel { display: grid; }
     #tab-failures:checked ~ section.failures { display: block; }
-    .failures { margin: 0 32px 48px; }
+    #tab-debug:checked ~ section.debug { display: block; }
+    .failures, .debug { margin: 0 32px 48px; }
+    .debug h2.subhead { margin-top: 28px; }
     .guide tbody tr { cursor: default; }
     .guide tbody tr:hover { background: transparent; }
     @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
@@ -85,9 +88,11 @@
   </header>
   <input class="tab-input" type="radio" name="tab" id="tab-console" checked>
   <input class="tab-input" type="radio" name="tab" id="tab-failures">
+  <input class="tab-input" type="radio" name="tab" id="tab-debug">
   <nav class="tabbar">
     <label for="tab-console">Transfer console</label>
     <label for="tab-failures">Common Failures</label>
+    <label for="tab-debug">How to debug</label>
   </nav>
   <main class="panel">
     <section>
@@ -176,6 +181,71 @@
           <td>The row is stored and published even though a business field looks wrong.</td>
           <td>Nobody rejects it</td>
           <td>The receiver only requires a JSON object with a UUID id. A string amount, or a payload that is not an object, is stored as sent.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+  <section class="panel debug">
+    <h2>Grafana</h2>
+    <p class="hint">Metrics and traces for the receiver and the transmitter. Open <span class="mono">http://127.0.0.1:30080</span> after the observability apply, as admin / admin. The Transfers dashboard stays empty until those pods are running. Prometheus scrapes <span class="mono">receiver:8080</span> and <span class="mono">transmitter:8080</span>. It does not scrape the console.</p>
+    <table class="guide">
+      <thead>
+        <tr><th>Question</th><th>Where</th><th>What to look at</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Did receives stop?</td>
+          <td>Transfers, Receive and publish rate</td>
+          <td><span class="mono">transfer_received_total</span> stays flat while the send pane still says Sent. The receiver is down, or Prometheus cannot scrape it.</td>
+        </tr>
+        <tr>
+          <td>Are publishes stuck?</td>
+          <td>Outbox depth, and Errors, retries, and dead letters</td>
+          <td>Depth climbs while rows stay <span class="status status-received">received</span> or <span class="status status-failed">failed</span>. <span class="mono">transfer_retries_total</span> counts refused publishes. <span class="mono">transfer_dlq_total</span> counts dead letters.</td>
+        </tr>
+        <tr>
+          <td>Is Postgres or Kafka slow?</td>
+          <td>Persist and publish latency</td>
+          <td>p95 of <span class="mono">transfer_persist_duration_seconds</span> and <span class="mono">transfer_publish_duration_seconds</span>.</td>
+        </tr>
+        <tr>
+          <td>What happened to one message?</td>
+          <td>Explore, Tempo</td>
+          <td>Paste the <span class="mono">trace_id</span> from a log line. The spans are <span class="mono">transfer.consume</span>, <span class="mono">transfer.insert</span>, <span class="mono">transfer.publish</span>, and <span class="mono">transfer.deadletter</span>.</td>
+        </tr>
+      </tbody>
+    </table>
+    <h2 class="subhead">ELK</h2>
+    <p class="hint">Elasticsearch, Logstash, and Kibana are not in this cluster. The receiver and the transmitter write one JSON object per line to stdout. Ship that output with Filebeat or Fluent Bit. Logstash is only needed if you want to change the line before it is indexed. A retry that was saved as <span class="status status-failed">failed</span> does not print an error line. Use the Grafana retry counter for those.</p>
+    <table class="guide">
+      <thead>
+        <tr><th>Question</th><th>Where</th><th>What to look at</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Where are the logs right now?</td>
+          <td>The process stdout, or <span class="mono">kubectl -n transfer logs</span></td>
+          <td>Each line has <span class="mono">time</span>, <span class="mono">level</span>, and <span class="mono">msg</span>. A line emitted inside a span also has <span class="mono">trace_id</span> and <span class="mono">span_id</span>.</td>
+        </tr>
+        <tr>
+          <td>Which message was not committed?</td>
+          <td>Kibana Discover</td>
+          <td><span class="mono">msg: "handle message"</span>. The fields include <span class="mono">topic</span>, <span class="mono">partition</span>, <span class="mono">offset</span>, <span class="mono">err</span>, and <span class="mono">trace_id</span>.</td>
+        </tr>
+        <tr>
+          <td>Did a fetch from the broker fail?</td>
+          <td>Kibana Discover</td>
+          <td><span class="mono">msg: "kafka fetch"</span>.</td>
+        </tr>
+        <tr>
+          <td>Did an outbox batch fail?</td>
+          <td>Kibana Discover</td>
+          <td><span class="mono">msg: "transmit batch"</span>. This is a claim error or a dead-letter write that the broker refused.</td>
+        </tr>
+        <tr>
+          <td>How do I connect a log to the trace?</td>
+          <td>Kibana, then Grafana Explore, Tempo</td>
+          <td>Filter on the <span class="mono">trace_id</span> from the log line in Kibana. Paste the same id into Tempo.</td>
         </tr>
       </tbody>
     </table>
