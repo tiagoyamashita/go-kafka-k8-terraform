@@ -143,6 +143,47 @@ Grafana is at http://127.0.0.1:30080. Sign in as `admin` / `admin` and open the 
 
 `make kind-up` creates the same cluster from `kind/cluster.yaml` instead of Terraform. Use one of those paths. Both want the cluster name `transfer`.
 
+## Open the console
+
+The console is an HTMX page. The send form produces the JSON to `transfers.in`. The history table lists rows the receiver has stored, and a row opens the status changes for that id.
+
+Run it on the host against the cluster Kafka and Postgres. This machine already has a Windows Postgres listening on `5432`, so that port is not the cluster database. Forward the cluster database first:
+
+```powershell
+$env:KUBECONFIG = "$pwd\terraform\cluster\kubeconfig"
+kubectl -n transfer port-forward pod/postgres-0 15432:5432
+```
+
+Leave that running. In a second terminal, start the receiver so a send is consumed:
+
+```powershell
+$env:DATABASE_URL = "postgres://transfer:transfer@127.0.0.1:15432/transfers?sslmode=disable"
+$env:KAFKA_BOOTSTRAP_SERVERS = "127.0.0.1:9092"
+$env:KAFKA_SECURITY_PROTOCOL = "PLAINTEXT"
+go build -o bin/receiver.exe ./cmd/receiver
+.\bin\receiver.exe
+```
+
+In a third terminal, with the same `DATABASE_URL` and Kafka settings, start the transmitter so a stored row can move to `published`:
+
+```powershell
+$env:HTTP_ADDR = ":8082"
+go build -o bin/transmitter.exe ./cmd/transmitter
+.\bin\transmitter.exe
+```
+
+In a fourth terminal, again with the same `DATABASE_URL` and Kafka settings:
+
+```powershell
+$env:HTTP_ADDR = ":8088"
+go build -o bin/console.exe ./cmd/console
+.\bin\console.exe
+```
+
+Open http://127.0.0.1:8088. The message box starts with a new UUID. Send replaces it with another sample. The history list refreshes every two seconds.
+
+A full cluster apply also runs the console in the cluster at http://127.0.0.1:30088. That host port is published only by a cluster created after the `30088` mapping was added. An existing kind cluster keeps using the host process on port `8088`.
+
 ## Send a message
 
 ```powershell

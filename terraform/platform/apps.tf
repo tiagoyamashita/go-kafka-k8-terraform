@@ -256,3 +256,118 @@ resource "kubernetes_service" "transmitter" {
     }
   }
 }
+
+resource "kubernetes_deployment" "console" {
+  metadata {
+    name      = "console"
+    namespace = local.namespace
+  }
+
+  spec {
+    replicas = 1
+
+    selector {
+      match_labels = {
+        app = "console"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "console"
+        }
+      }
+
+      spec {
+        container {
+          name              = "console"
+          image             = var.image
+          image_pull_policy = "IfNotPresent"
+          command           = ["/console"]
+
+          env_from {
+            config_map_ref {
+              name = kubernetes_config_map.transfer.metadata[0].name
+            }
+          }
+
+          env {
+            name  = "OTEL_SERVICE_NAME"
+            value = "console"
+          }
+
+          env {
+            name = "DATABASE_URL"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.transfer.metadata[0].name
+                key  = "DATABASE_URL"
+              }
+            }
+          }
+
+          port {
+            name           = "http"
+            container_port = 8080
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/healthz"
+              port = "8080"
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+          }
+
+          readiness_probe {
+            http_get {
+              path = "/readyz"
+              port = "8080"
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 5
+          }
+
+          resources {
+            requests = {
+              cpu    = "20m"
+              memory = "32Mi"
+            }
+            limits = {
+              memory = "128Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    kubernetes_stateful_set.postgres,
+    kubernetes_stateful_set.kafka,
+    kubernetes_job.kafka_topics,
+  ]
+}
+
+resource "kubernetes_service" "console" {
+  metadata {
+    name      = "console"
+    namespace = local.namespace
+  }
+
+  spec {
+    type = "NodePort"
+    selector = {
+      app = "console"
+    }
+
+    port {
+      name        = "http"
+      port        = 8080
+      target_port = "8080"
+      node_port   = 30088
+    }
+  }
+}

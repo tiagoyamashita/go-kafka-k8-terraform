@@ -30,6 +30,11 @@ resource "kind_cluster" "transfer" {
         host_port      = 5432
         protocol       = "TCP"
       }
+      extra_port_mappings {
+        container_port = 30088
+        host_port      = 30088
+        protocol       = "TCP"
+      }
     }
   }
 }

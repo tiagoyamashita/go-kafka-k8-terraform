@@ -112,7 +112,7 @@ flowchart LR
 
 Terraform is split in two because the Kubernetes provider needs a kubeconfig that already exists.
 
-1. `terraform/cluster` creates a one-node kind cluster named `transfer` inside Podman and writes `terraform/cluster/kubeconfig`. The kind provider chooses Podman when the `docker` command is absent. Host ports are `9092` for Kafka, `5432` for Postgres, and `30080` for Grafana.
+1. `terraform/cluster` creates a one-node kind cluster named `transfer` inside Podman and writes `terraform/cluster/kubeconfig`. The kind provider chooses Podman when the `docker` command is absent. Host ports are `9092` for Kafka, `5432` for Postgres, `30080` for Grafana, and `30088` for the console.
 2. `terraform/platform` installs the namespace `transfer`. Kafka and Postgres are the data plane and can be applied on their own. The receiver, transmitter, and observability stack are the rest of the same apply.
 
 Platform pieces:
@@ -120,9 +120,9 @@ Platform pieces:
 - kind's built-in local-path StorageClass `standard`, so Kafka and Postgres keep a 1Gi volume across pod restarts
 - Postgres 16, database `transfers`, user `transfer`
 - Kafka and the topic job
-- receiver and transmitter, image `transfer:local`, `imagePullPolicy: IfNotPresent`
+- receiver, transmitter, and console, image `transfer:local`, `imagePullPolicy: IfNotPresent`
 - OpenTelemetry Collector, Prometheus, Tempo, and Grafana
 
-Both deployments use that one image. The receiver command is `/receiver`. The transmitter command is `/transmitter`. Either process can apply the embedded SQL migration. A Postgres advisory lock keeps those startups from racing.
+The workloads use that one image. The receiver command is `/receiver`. The transmitter command is `/transmitter`. The console command is `/console`, and it is the HTMX page for sending a message and reading consumed history. Any of the three can apply the embedded SQL migration. A Postgres advisory lock keeps those startups from racing.
 
 Build and startup steps are in [build-and-run.md](build-and-run.md). Confluent Cloud environment variables are in the [README](../README.md).

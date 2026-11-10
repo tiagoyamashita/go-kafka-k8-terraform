@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ type Memory struct {
 	now     func() time.Time
 	rows    map[string]transfer.Record
 	offsets map[string]string
+	events  map[string][]transfer.Event
 }
 
 // NewMemory returns an empty store.
@@ -24,6 +26,7 @@ func NewMemory() *Memory {
 		now:     time.Now,
 		rows:    make(map[string]transfer.Record),
 		offsets: make(map[string]string),
+		events:  make(map[string][]transfer.Event),
 	}
 }
 
@@ -57,6 +60,7 @@ func (m *Memory) InsertReceived(_ context.Context, rec transfer.Record) (bool, e
 	rec.ReceivedAt = m.now()
 	m.rows[rec.ID] = rec
 	m.offsets[key] = rec.ID
+	m.appendEvent(rec.ID, transfer.StatusReceived, fmt.Sprintf("%s:%d:%d", rec.SourceTopic, rec.Partition, rec.Offset))
 	return true, nil
 }
 
@@ -146,6 +150,43 @@ func (m *Memory) Get(id string) (transfer.Record, bool) {
 	return rec, true
 }
 
+// List returns the newest transfers, up to limit.
+func (m *Memory) List(_ context.Context, limit int) ([]transfer.Record, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]transfer.Record, 0, len(m.rows))
+	for _, rec := range m.rows {
+		rec.Payload = clonePayload(rec.Payload)
+		out = append(out, rec)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ReceivedAt.Equal(out[j].ReceivedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].ReceivedAt.After(out[j].ReceivedAt)
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// History returns one transfer and the status changes recorded for it.
+func (m *Memory) History(_ context.Context, id string) (transfer.Record, []transfer.Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.rows[id]
+	if !ok {
+		return transfer.Record{}, nil, ErrNotFound
+	}
+	rec.Payload = clonePayload(rec.Payload)
+	events := append([]transfer.Event(nil), m.events[id]...)
+	return rec, events, nil
+}
+
 // Len returns the number of stored transfers.
 func (m *Memory) Len() int {
 	m.mu.Lock()
@@ -182,6 +223,11 @@ func (m *Memory) claim(limit int, bump bool, match func(transfer.Record, time.Ti
 			current.LastError = ""
 		}
 		m.rows[rec.ID] = current
+		detail := "dead-letter"
+		if bump {
+			detail = fmt.Sprintf("attempt %d", current.Attempts)
+		}
+		m.appendEvent(rec.ID, current.Status, detail)
 		current.Payload = clonePayload(current.Payload)
 		out = append(out, current)
 	}
@@ -200,7 +246,20 @@ func (m *Memory) mark(id string, update func(*transfer.Record)) error {
 	}
 	update(&rec)
 	m.rows[id] = rec
+	detail := ""
+	if rec.Status == transfer.StatusFailed || rec.Status == transfer.StatusDead {
+		detail = rec.LastError
+	}
+	m.appendEvent(id, rec.Status, detail)
 	return nil
+}
+
+func (m *Memory) appendEvent(id string, status transfer.Status, detail string) {
+	m.events[id] = append(m.events[id], transfer.Event{
+		Status: status,
+		Detail: detail,
+		At:     m.now(),
+	})
 }
 
 func leaseExpired(rec transfer.Record, now time.Time, lease time.Duration) bool {

@@ -36,6 +36,13 @@ type Record struct {
 	PublishedAt time.Time
 }
 
+// Event is one status change recorded for a transfer.
+type Event struct {
+	Status Status
+	Detail string
+	At     time.Time
+}
+
 // Inbound is one Kafka record handed to the receiver.
 type Inbound struct {
 	Topic     string

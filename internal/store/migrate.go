@@ -9,15 +9,20 @@ import (
 )
 
 //go:embed migrations/001_transfers.sql
-var migrationSQL string
+var migration001 string
 
-const (
-	migrationVersion = "001"
-	migrationLockID  = int64(814271)
-)
+//go:embed migrations/002_events.sql
+var migration002 string
 
-// Migrate applies the embedded SQL once. The transaction advisory lock lets the
-// receiver and the transmitter start together without racing the schema change.
+const migrationLockID = int64(814271)
+
+type migration struct {
+	version string
+	sql     string
+}
+
+// Migrate applies each embedded SQL file once. The transaction advisory lock lets
+// the receiver, transmitter, and console start together without racing the schema change.
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -44,16 +49,23 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	var applied bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, migrationVersion).Scan(&applied); err != nil {
-		return fmt.Errorf("read schema_migrations: %w", err)
+	steps := []migration{
+		{version: "001", sql: migration001},
+		{version: "002", sql: migration002},
 	}
-	if !applied {
-		if _, err := tx.Exec(ctx, migrationSQL); err != nil {
-			return fmt.Errorf("apply migration %s: %w", migrationVersion, err)
+	for _, step := range steps {
+		var applied bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, step.version).Scan(&applied); err != nil {
+			return fmt.Errorf("read schema_migrations: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, migrationVersion); err != nil {
-			return fmt.Errorf("record migration %s: %w", migrationVersion, err)
+		if applied {
+			continue
+		}
+		if _, err := tx.Exec(ctx, step.sql); err != nil {
+			return fmt.Errorf("apply migration %s: %w", step.version, err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, step.version); err != nil {
+			return fmt.Errorf("record migration %s: %w", step.version, err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

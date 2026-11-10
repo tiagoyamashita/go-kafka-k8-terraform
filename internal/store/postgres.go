@@ -2,21 +2,28 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/wovenbytoyota/go-kafka-k8-terraform/internal/transfer"
 )
 
 const insertSQL = `
-INSERT INTO transfers (
-    id, message_key, payload, source_topic, partition, kafka_offset, status
-) VALUES (
-    $1, $2, $3::jsonb, $4, $5, $6, 'received'
+WITH inserted AS (
+    INSERT INTO transfers (
+        id, message_key, payload, source_topic, partition, kafka_offset, status
+    ) VALUES (
+        $1, $2, $3::jsonb, $4, $5, $6, 'received'
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING id
 )
-ON CONFLICT DO NOTHING
+INSERT INTO transfer_events (transfer_id, status, detail)
+SELECT id, 'received', $7 FROM inserted
 `
 
 const claimPublishSQL = `
@@ -29,16 +36,25 @@ WITH picked AS (
     ORDER BY received_at, id
     FOR UPDATE SKIP LOCKED
     LIMIT $1
+),
+updated AS (
+    UPDATE transfers AS t
+    SET status = 'publishing',
+        attempts = t.attempts + 1,
+        locked_at = now(),
+        last_error = NULL
+    FROM picked
+    WHERE t.id = picked.id
+    RETURNING t.id, t.message_key, t.payload, t.source_topic, t.partition, t.kafka_offset,
+              t.status, t.attempts, t.last_error, t.locked_at, t.received_at, t.published_at
+),
+logged AS (
+    INSERT INTO transfer_events (transfer_id, status, detail)
+    SELECT id, status, 'attempt ' || attempts::text FROM updated
 )
-UPDATE transfers AS t
-SET status = 'publishing',
-    attempts = t.attempts + 1,
-    locked_at = now(),
-    last_error = NULL
-FROM picked
-WHERE t.id = picked.id
-RETURNING t.id, t.message_key, t.payload, t.source_topic, t.partition, t.kafka_offset,
-          t.status, t.attempts, t.last_error, t.locked_at, t.received_at, t.published_at
+SELECT id, message_key, payload, source_topic, partition, kafka_offset,
+       status, attempts, last_error, locked_at, received_at, published_at
+FROM updated
 `
 
 const claimDeadSQL = `
@@ -50,14 +66,23 @@ WITH picked AS (
     ORDER BY received_at, id
     FOR UPDATE SKIP LOCKED
     LIMIT $1
+),
+updated AS (
+    UPDATE transfers AS t
+    SET status = 'publishing',
+        locked_at = now()
+    FROM picked
+    WHERE t.id = picked.id
+    RETURNING t.id, t.message_key, t.payload, t.source_topic, t.partition, t.kafka_offset,
+              t.status, t.attempts, t.last_error, t.locked_at, t.received_at, t.published_at
+),
+logged AS (
+    INSERT INTO transfer_events (transfer_id, status, detail)
+    SELECT id, status, 'dead-letter' FROM updated
 )
-UPDATE transfers AS t
-SET status = 'publishing',
-    locked_at = now()
-FROM picked
-WHERE t.id = picked.id
-RETURNING t.id, t.message_key, t.payload, t.source_topic, t.partition, t.kafka_offset,
-          t.status, t.attempts, t.last_error, t.locked_at, t.received_at, t.published_at
+SELECT id, message_key, payload, source_topic, partition, kafka_offset,
+       status, attempts, last_error, locked_at, received_at, published_at
+FROM updated
 `
 
 // Postgres stores transfer JSON and the outbox state.
@@ -110,6 +135,7 @@ func (s *Postgres) InsertReceived(ctx context.Context, rec transfer.Record) (boo
 		rec.SourceTopic,
 		rec.Partition,
 		rec.Offset,
+		fmt.Sprintf("%s:%d:%d", rec.SourceTopic, rec.Partition, rec.Offset),
 	)
 	if err != nil {
 		return false, fmt.Errorf("insert transfer: %w", err)
@@ -130,9 +156,14 @@ func (s *Postgres) ClaimDead(ctx context.Context, limit int, lease time.Duration
 // MarkPublished records a successful outbound produce.
 func (s *Postgres) MarkPublished(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE transfers
-		SET status = 'published', published_at = now(), locked_at = NULL, last_error = NULL
-		WHERE id = $1 AND status = 'publishing'
+		WITH updated AS (
+			UPDATE transfers
+			SET status = 'published', published_at = now(), locked_at = NULL, last_error = NULL
+			WHERE id = $1 AND status = 'publishing'
+			RETURNING id
+		)
+		INSERT INTO transfer_events (transfer_id, status, detail)
+		SELECT id, 'published', '' FROM updated
 	`, id)
 	if err != nil {
 		return fmt.Errorf("mark published: %w", err)
@@ -146,9 +177,14 @@ func (s *Postgres) MarkPublished(ctx context.Context, id string) error {
 // MarkFailed records a publish error and leaves the row eligible for retry.
 func (s *Postgres) MarkFailed(ctx context.Context, id, message string) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE transfers
-		SET status = 'failed', last_error = $2, locked_at = NULL
-		WHERE id = $1 AND status = 'publishing'
+		WITH updated AS (
+			UPDATE transfers
+			SET status = 'failed', last_error = $2, locked_at = NULL
+			WHERE id = $1 AND status = 'publishing'
+			RETURNING id
+		)
+		INSERT INTO transfer_events (transfer_id, status, detail)
+		SELECT id, 'failed', $2 FROM updated
 	`, id, message)
 	if err != nil {
 		return fmt.Errorf("mark failed: %w", err)
@@ -162,11 +198,16 @@ func (s *Postgres) MarkFailed(ctx context.Context, id, message string) error {
 // MarkDead records that the row was written to the dead-letter topic.
 func (s *Postgres) MarkDead(ctx context.Context, id, message string) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE transfers
-		SET status = 'dead',
-		    last_error = COALESCE(NULLIF($2, ''), last_error),
-		    locked_at = NULL
-		WHERE id = $1 AND status = 'publishing'
+		WITH updated AS (
+			UPDATE transfers
+			SET status = 'dead',
+			    last_error = COALESCE(NULLIF($2, ''), last_error),
+			    locked_at = NULL
+			WHERE id = $1 AND status = 'publishing'
+			RETURNING id, last_error
+		)
+		INSERT INTO transfer_events (transfer_id, status, detail)
+		SELECT id, 'dead', COALESCE(last_error, '') FROM updated
 	`, id, message)
 	if err != nil {
 		return fmt.Errorf("mark dead: %w", err)
@@ -189,6 +230,78 @@ func (s *Postgres) OutboxDepth(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("outbox depth: %w", err)
 	}
 	return n, nil
+}
+
+// List returns the newest transfers, up to limit.
+func (s *Postgres) List(ctx context.Context, limit int) ([]transfer.Record, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, message_key, payload, source_topic, partition, kafka_offset,
+		       status, attempts, last_error, locked_at, received_at, published_at
+		FROM transfers
+		ORDER BY received_at DESC, id DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list transfers: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]transfer.Record, 0)
+	for rows.Next() {
+		rec, err := scanRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read transfers: %w", err)
+	}
+	return out, nil
+}
+
+// History returns one transfer and the status changes recorded for it.
+func (s *Postgres) History(ctx context.Context, id string) (transfer.Record, []transfer.Event, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, message_key, payload, source_topic, partition, kafka_offset,
+		       status, attempts, last_error, locked_at, received_at, published_at
+		FROM transfers
+		WHERE id = $1
+	`, id)
+	rec, err := scanRecord(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return transfer.Record{}, nil, ErrNotFound
+		}
+		return transfer.Record{}, nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT status, detail, at
+		FROM transfer_events
+		WHERE transfer_id = $1
+		ORDER BY id
+	`, id)
+	if err != nil {
+		return transfer.Record{}, nil, fmt.Errorf("list transfer events: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]transfer.Event, 0)
+	for rows.Next() {
+		var event transfer.Event
+		if err := rows.Scan(&event.Status, &event.Detail, &event.At); err != nil {
+			return transfer.Record{}, nil, fmt.Errorf("scan transfer event: %w", err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return transfer.Record{}, nil, fmt.Errorf("read transfer events: %w", err)
+	}
+	return rec, events, nil
 }
 
 func (s *Postgres) claim(ctx context.Context, sql string, limit int, lease time.Duration, maxAttempts int) ([]transfer.Record, error) {
