@@ -9,7 +9,7 @@ transfers.in -> receiver -> Postgres (payload jsonb) -> transmitter -> transfers
 
 The same binaries talk to a local broker or to Confluent Cloud. Only the Kafka environment variables change.
 
-How the pieces fit together is in [docs/architecture.md](docs/architecture.md). Install Go, Terraform, Podman, kind, and kubectl with [docs/setup.md](docs/setup.md), then build and run with [docs/build-and-run.md](docs/build-and-run.md).
+How the pieces fit together is in [docs/architecture.md](docs/architecture.md). Install Go, Terraform, Podman, kind, and kubectl with [docs/setup.md](docs/setup.md), then build and run with [docs/build-and-run.md](docs/build-and-run.md). An AWS cost estimate for the same processes is in [docs/aws-cost.md](docs/aws-cost.md).
 
 ## What is stored
 
