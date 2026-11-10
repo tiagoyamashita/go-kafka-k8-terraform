@@ -153,9 +153,34 @@
           <td>Catch it on the front end is unchecked. Send a Receiver request, including Receiver: larger than 64KiB. The receiver writes the error to <span class="mono">transfers.dlq</span> and does not store it.</td>
         </tr>
         <tr>
-          <td>Kafka did not accept the message.</td>
+          <td><span class="mono">MESSAGE_TOO_LARGE</span> under Kafka errors.</td>
           <td>Kafka</td>
-          <td>The broker is down, the address is wrong, the topic is missing or invalid, or the client speaks SASL to the plaintext listener. The thrown text is kept under Kafka errors. Leave the checkbox unchecked and send one of the Kafka requests. Kafka: message too large does not compress, so <span class="mono">transfers.in</span> refuses it. Receiver: larger than 64KiB is only the letter x, which compresses under the limit, so Kafka accepts it.</td>
+          <td>Catch it on the front end is unchecked. Send Kafka: message too large. The body is random text, so it stays over 64KiB after compression and <span class="mono">transfers.in</span> refuses it. Receiver: larger than 64KiB is only the letter x, which compresses under that limit, so Kafka accepts it and the receiver dead-letters it. With the checkbox checked, the pane stops the large body and Kafka is not called.</td>
+        </tr>
+        <tr>
+          <td><span class="mono">UNKNOWN_TOPIC_OR_PARTITION</span> under Kafka errors.</td>
+          <td>Kafka</td>
+          <td>Send Kafka: unknown topic. The produce goes to <span class="mono">transfers.missing</span>. Topic auto-create is off, so the broker does not create it. The body is valid, so the checkbox does not stop it.</td>
+        </tr>
+        <tr>
+          <td><span class="mono">INVALID_TOPIC_EXCEPTION</span> under Kafka errors.</td>
+          <td>Kafka</td>
+          <td>Send Kafka: invalid topic. The topic name is <span class="mono">bad topic</span>, which the broker will not accept.</td>
+        </tr>
+        <tr>
+          <td>A dial error for <span class="mono">127.0.0.1:1</span> under Kafka errors.</td>
+          <td>Kafka client</td>
+          <td>Send Kafka: wrong address. Nothing listens on that port, so the produce fails before a broker sees it.</td>
+        </tr>
+        <tr>
+          <td><span class="mono">broker unreachable at 192.0.2.1:9092</span> under Kafka errors.</td>
+          <td>Kafka client</td>
+          <td>Send Kafka: broker unreachable. That address does not route, so the dial times out. The cluster broker is still up.</td>
+        </tr>
+        <tr>
+          <td><span class="mono">ILLEGAL_SASL_STATE</span> under Kafka errors.</td>
+          <td>Kafka</td>
+          <td>Send Kafka: SASL rejected. The listener is plaintext. The client offers SASL, and the broker rejects that request. This cluster has no access-control list that denies a normal client.</td>
         </tr>
         <tr>
           <td>A green Sent line. The id never appears under Consumed messages.</td>
@@ -256,6 +281,55 @@
           <td>How do I connect a log to the trace?</td>
           <td>Kibana, then Grafana Explore, Tempo</td>
           <td>Filter on the <span class="mono">trace_id</span> from the log line in Kibana. Paste the same id into Tempo.</td>
+        </tr>
+      </tbody>
+    </table>
+    <h2 class="subhead">Kafka errors</h2>
+    <p class="hint">The Kafka errors list on the Transfer console is the produce error, kept in memory by the console. It is not a broker log and not a receiver dead letter. A refused produce never reaches the receiver, so <span class="mono">transfer_dlq_total</span> does not move and there is no <span class="mono">handle message</span> line. Wrong address and broker unreachable fail before a connection, so the Kafka pod log stays quiet. The other four are answered by the broker.</p>
+    <table class="guide">
+      <thead>
+        <tr><th>Question</th><th>Where</th><th>What to look at</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Which produce was refused?</td>
+          <td>Transfer console, Kafka errors</td>
+          <td>The thrown text, the time, and the key. The same text is the red line in the send pane until the next send. The list is emptied when the console process restarts.</td>
+        </tr>
+        <tr>
+          <td>Why is the body too large?</td>
+          <td>Kafka errors, after Kafka: message too large</td>
+          <td><span class="mono">MESSAGE_TOO_LARGE</span>. <span class="mono">transfers.in</span> allows 65536 bytes after compression. Repeated x compresses under that and is accepted.</td>
+        </tr>
+        <tr>
+          <td>Why is the topic missing?</td>
+          <td>Kafka errors, after Kafka: unknown topic</td>
+          <td><span class="mono">UNKNOWN_TOPIC_OR_PARTITION</span>. Auto-create is off, so <span class="mono">transfers.missing</span> is not created.</td>
+        </tr>
+        <tr>
+          <td>Why is the topic name rejected?</td>
+          <td>Kafka errors, after Kafka: invalid topic</td>
+          <td><span class="mono">INVALID_TOPIC_EXCEPTION</span>. The topic name is <span class="mono">bad topic</span>.</td>
+        </tr>
+        <tr>
+          <td>Why did the dial fail?</td>
+          <td>Kafka errors, after Kafka: wrong address</td>
+          <td><span class="mono">dial tcp 127.0.0.1:1</span> and connection refused. Nothing is listening there.</td>
+        </tr>
+        <tr>
+          <td>Why did the produce time out?</td>
+          <td>Kafka errors, after Kafka: broker unreachable</td>
+          <td><span class="mono">broker unreachable at 192.0.2.1:9092</span>. That address does not route. The cluster broker can still be healthy.</td>
+        </tr>
+        <tr>
+          <td>Why was SASL rejected?</td>
+          <td>Kafka errors, after Kafka: SASL rejected</td>
+          <td><span class="mono">ILLEGAL_SASL_STATE</span>. The listener is plaintext. This is not an access-control denial.</td>
+        </tr>
+        <tr>
+          <td>Did the broker log the refusal?</td>
+          <td><span class="mono">kubectl -n transfer logs kafka-0</span></td>
+          <td>Use this for message too large, unknown topic, invalid topic, and SASL. A dial failure is only in the console list.</td>
         </tr>
       </tbody>
     </table>

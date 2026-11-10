@@ -44,7 +44,7 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "Common Failures") || !strings.Contains(body, "Who decides") || !strings.Contains(body, "transfers.out") {
 		t.Fatalf("page missing failure guide: %s", body)
 	}
-	if !strings.Contains(body, "How to debug") || !strings.Contains(body, "Kibana Discover") || !strings.Contains(body, "transfer_dlq_total") {
+	if !strings.Contains(body, "How to debug") || !strings.Contains(body, "Kibana Discover") || !strings.Contains(body, "transfer_dlq_total") || !strings.Contains(body, "UNKNOWN_TOPIC_OR_PARTITION") || !strings.Contains(body, "ILLEGAL_SASL_STATE") {
 		t.Fatalf("page missing debug guide: %s", body)
 	}
 }
