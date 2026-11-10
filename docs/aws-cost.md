@@ -66,6 +66,24 @@ Accounts opened before 15 July 2025 keep the older 12-month offers:
 
 That older offer knocks the database off the small-cluster bill and still leaves EKS, MSK, and the NAT gateway. The floor for a replicated broker plus a managed Kubernetes control plane stays near $150 a month.
 
+## Free database, everything else on this machine
+
+Leave Kafka, the receiver, the transmitter, and the console where they already run. Create one AWS resource: a single-AZ RDS for PostgreSQL, `db.t4g.micro` (or `db.t3.micro` on the older offer), 20 GB gp3, backups capped at 20 GB. Skip Multi-AZ, a second instance, EKS, MSK, a NAT gateway, and a load balancer. On an older free-tier account that database is $0 for 12 months. On a Free plan opened after 15 July 2025 it stays inside the no-charge account for up to six months.
+
+Make the instance publicly reachable and allow TCP 5432 only from your current public IP. One public IPv4 is about $3.65 a month when it is outside the 750-hour public-address allowance, so check the bill after the first day.
+
+Point the three local processes at that endpoint. Kafka stays on the machine:
+
+```powershell
+$env:DATABASE_URL = "postgres://transfer:YOUR_PASSWORD@your-db.xxxxxx.us-east-1.rds.amazonaws.com:5432/transfers?sslmode=require"
+$env:KAFKA_BOOTSTRAP_SERVERS = "127.0.0.1:9092"
+$env:KAFKA_SECURITY_PROTOCOL = "PLAINTEXT"
+```
+
+Start the receiver, then the transmitter, then the console with `HTTP_ADDR=:8088`. The receiver applies the schema on startup. The console stays at http://127.0.0.1:8088.
+
+The kind Postgres on this machine can stay stopped. The Windows Postgres already bound to port 5432 is a different server and is not the RDS instance.
+
 ## What else shows up on the bill
 
 These stay small at the message rate this service is built for, and they grow with bytes rather than with pod count.
