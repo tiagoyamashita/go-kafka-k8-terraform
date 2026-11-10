@@ -2,6 +2,7 @@ package transmitter
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -109,6 +110,15 @@ func (w *Worker) publish(ctx context.Context, rec transfer.Record) error {
 		attribute.String("messaging.destination.name", w.opt.OutboundTopic),
 	))
 	defer span.End()
+
+	if reason, refuse := transfer.PublishRefusal(rec.Payload, rec.Attempts); refuse {
+		span.RecordError(errors.New(reason))
+		if rec.Attempts >= w.opt.MaxAttempts {
+			return w.deadLetter(ctx, rec, reason)
+		}
+		w.opt.Metrics.AddRetries(ctx, 1)
+		return w.store.MarkFailed(ctx, rec.ID, reason)
+	}
 
 	start := time.Now()
 	err := w.producer.Produce(ctx, w.opt.OutboundTopic, rec.ID, rec.Payload)

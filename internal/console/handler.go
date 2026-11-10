@@ -80,11 +80,7 @@ func (h *Handler) loadExample(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	body := ex.Body
-	if ex.ID == validExampleID {
-		body = sampleMessage()
-	}
-	h.render(w, "composer", newComposer(body, "", "", ex.ID, r.URL.Query().Get("check") == "1"))
+	h.render(w, "composer", newComposer(ex.text(), "", "", ex.ID, r.URL.Query().Get("check") == "1"))
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +106,7 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		key = rec.ID
 		sentID = rec.ID
-		note = ""
+		note = transfer.FailureNote([]byte(raw))
 	}
 	if err := h.producer.Produce(r.Context(), h.topic, key, []byte(raw)); err != nil {
 		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected, check))
@@ -244,12 +240,16 @@ type requestExample struct {
 	ID    string
 	Label string
 	Body  string
+	Fail  string
 }
 
-// requestExamples is the send-pane list. The first entry is a fresh valid
-// message. The rest are bodies the pane rejects.
+// requestExamples is the send-pane list. Valid transfer is published.
+// The fail entries are stored, then the transmitter refuses them.
+// The rest are bodies the pane rejects.
 var requestExamples = []requestExample{
 	{ID: validExampleID, Label: "Valid transfer"},
+	{ID: "fail-once", Label: "Fail publish once", Fail: transfer.FailOnce},
+	{ID: "fail-always", Label: "Fail until dead", Fail: transfer.FailAlways},
 	{ID: "not-json", Label: "Not JSON", Body: "not json"},
 	{ID: "array", Label: "JSON array", Body: `[{"id":"11111111-1111-1111-1111-111111111111"}]`},
 	{ID: "missing-id", Label: "Missing id", Body: `{"type":"transfer","payload":{"amount":10}}`},
@@ -259,6 +259,17 @@ var requestExamples = []requestExample{
 	{ID: "number-id", Label: "id is a number", Body: `{"id":1}`},
 	{ID: "string", Label: "Bare string", Body: `"just a string"`},
 	{ID: "truncated", Label: "Truncated JSON", Body: `{"id":"11111111-1111-1111-1111-111111111111"`},
+}
+
+func (ex requestExample) text() string {
+	switch {
+	case ex.ID == validExampleID:
+		return sampleMessage()
+	case ex.Fail != "":
+		return failMessage(ex.Fail)
+	default:
+		return ex.Body
+	}
 }
 
 func exampleByID(id string) (requestExample, bool) {
@@ -350,14 +361,32 @@ func fallbackEvents(rec transfer.Record) []transfer.Event {
 	return events
 }
 
-func sampleMessage() string {
-	raw, err := json.MarshalIndent(map[string]any{
-		"id":   uuid.NewString(),
-		"type": "transfer",
+func failMessage(mode string) string {
+	return sampleMessageWith(map[string]any{
+		"fail": mode,
 		"payload": map[string]any{
 			"amount": 10,
 		},
-	}, "", "  ")
+	})
+}
+
+func sampleMessage() string {
+	return sampleMessageWith(map[string]any{
+		"payload": map[string]any{
+			"amount": 10,
+		},
+	})
+}
+
+func sampleMessageWith(extra map[string]any) string {
+	body := map[string]any{
+		"id":   uuid.NewString(),
+		"type": "transfer",
+	}
+	for key, value := range extra {
+		body[key] = value
+	}
+	raw, err := json.MarshalIndent(body, "", "  ")
 	if err != nil {
 		return ""
 	}

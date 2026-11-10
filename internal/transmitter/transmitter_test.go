@@ -74,6 +74,66 @@ func TestRunOnceRetriesThenDeadLetters(t *testing.T) {
 	}
 }
 
+func TestFailOncePublishesOnTheSecondAttempt(t *testing.T) {
+	mem := store.NewMemory()
+	body := []byte(`{"id":"11111111-1111-1111-1111-111111111111","type":"transfer","fail":"once"}`)
+	if _, err := mem.InsertReceived(context.Background(), transfer.Record{
+		ID: "11111111-1111-1111-1111-111111111111", MessageKey: "11111111-1111-1111-1111-111111111111",
+		Payload: body, SourceTopic: "transfers.in", Offset: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prod := &fakeProducer{}
+	worker := New(mem, prod, testOptions(5))
+	if _, err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := mem.Get("11111111-1111-1111-1111-111111111111")
+	if got.Status != transfer.StatusFailed || got.LastError != "publish refused: fail once" {
+		t.Fatalf("after first attempt %+v", got)
+	}
+	if len(prod.got) != 0 {
+		t.Fatalf("published early %#v", prod.got)
+	}
+	if _, err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = mem.Get("11111111-1111-1111-1111-111111111111")
+	if got.Status != transfer.StatusPublished || len(prod.got) != 1 || prod.got[0].topic != "transfers.out" {
+		t.Fatalf("after second %+v produces %#v", got, prod.got)
+	}
+}
+
+func TestFailAlwaysDeadLettersWithoutPublishing(t *testing.T) {
+	mem := store.NewMemory()
+	body := []byte(`{"id":"11111111-1111-1111-1111-111111111111","type":"transfer","fail":"always"}`)
+	if _, err := mem.InsertReceived(context.Background(), transfer.Record{
+		ID: "11111111-1111-1111-1111-111111111111", MessageKey: "11111111-1111-1111-1111-111111111111",
+		Payload: body, SourceTopic: "transfers.in", Offset: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prod := &fakeProducer{}
+	worker := New(mem, prod, testOptions(2))
+	if _, err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := mem.Get("11111111-1111-1111-1111-111111111111")
+	if got.Status != transfer.StatusFailed {
+		t.Fatalf("status %s", got.Status)
+	}
+	if _, err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = mem.Get("11111111-1111-1111-1111-111111111111")
+	if got.Status != transfer.StatusDead || got.LastError != "publish refused: fail always" {
+		t.Fatalf("dead %+v", got)
+	}
+	if len(prod.got) != 1 || prod.got[0].topic != "transfers.dlq" {
+		t.Fatalf("produces %#v", prod.got)
+	}
+}
+
 func TestRunOnceKeepsFailedWhenDLQIsDown(t *testing.T) {
 	mem := store.NewMemory()
 	if _, err := mem.InsertReceived(context.Background(), stored()); err != nil {

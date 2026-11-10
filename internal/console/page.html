@@ -114,7 +114,7 @@
     <option value="{{.ID}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>
     {{end}}
   </select>
-  <p class="hint">Valid transfer is accepted. The other requests fail the id check.</p>
+  <p class="hint">Valid transfer is stored and published. Fail publish once and Fail until dead are stored, then the transmitter refuses them. The other requests fail the id check.</p>
   <label class="check" for="check">
     <input id="check" type="checkbox" name="check" value="1" {{if .Check}}checked{{end}}>
     Reject invalid messages in this pane

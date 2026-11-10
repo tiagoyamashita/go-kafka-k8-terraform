@@ -47,6 +47,8 @@ These are the ones that look successful on the left and still break the transfer
 | 23 | Receiver up, transmitter stopped. Send a new id. | Green line. | The row stays `received`. `published` never arrives. |
 | 24 | Send `{"id":"<uuid>","type":"transfer","payload":{"amount":"ten"}}` | Green line. | The pipeline stores it. Nothing checks that `amount` is a number. |
 | 25 | Send a valid object whose `id` differs from a nested `payload.id` | Green line uses the top-level id. | History is keyed by the top-level id only. |
+| 30 | Select **Fail publish once** and send | Green line, plus "fails the first publish". The box is a new sample. | The row is stored, becomes `failed` with `publish refused: fail once`, then `published` on the next attempt. |
+| 31 | Select **Fail until dead** and send | Green line, plus "until the row is dead". | The row stays `failed`, then becomes `dead` after the attempt cap. The same body shows under Dead-lettered. |
 
 ## Pane behavior
 

@@ -26,7 +26,7 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "Send") || !strings.Contains(body, "hx-post=\"/messages\"") {
 		t.Fatalf("page missing send form: %s", body)
 	}
-	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") {
+	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") || !strings.Contains(body, "Fail until dead") {
 		t.Fatalf("page missing request list: %s", body)
 	}
 	if !strings.Contains(body, "Dead-lettered") || !strings.Contains(body, `hx-get="/dead-letters"`) {
@@ -63,6 +63,33 @@ func TestSelectExampleLoadsTheBody(t *testing.T) {
 	h.loadExample(missing, httptest.NewRequest(http.MethodGet, "/examples?example=nope", nil))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("status %d", missing.Code)
+	}
+}
+
+func TestFailExamplesAreStoredThenRefused(t *testing.T) {
+	prod := &fakeProducer{}
+	h := newTestHandler(t, store.NewMemory(), prod)
+	loaded := httptest.NewRecorder()
+	h.loadExample(loaded, httptest.NewRequest(http.MethodGet, "/examples?example=fail-always", nil))
+	body := loaded.Body.String()
+	if !strings.Contains(body, "always") || !strings.Contains(body, `value="fail-always" selected`) {
+		t.Fatalf("box was not filled: %s", body)
+	}
+	if len(prod.records) != 0 {
+		t.Fatal("choosing an example produced a message")
+	}
+
+	sent := postMessage(t, h, `{"id":"11111111-1111-1111-1111-111111111111","type":"transfer","fail":"once"}`, true)
+	if !strings.Contains(sent.Body.String(), "fails the first publish") {
+		t.Fatalf("response %s", sent.Body.String())
+	}
+	if len(prod.records) != 1 || prod.records[0].key != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("produced %#v", prod.records)
+	}
+
+	dead := postMessage(t, h, `{"id":"22222222-2222-2222-2222-222222222222","type":"transfer","fail":"always"}`, true)
+	if !strings.Contains(dead.Body.String(), "until the row is dead") {
+		t.Fatalf("response %s", dead.Body.String())
 	}
 }
 

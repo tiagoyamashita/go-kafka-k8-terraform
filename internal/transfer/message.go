@@ -76,3 +76,46 @@ func Parse(raw []byte) (Record, error) {
 		Status:  StatusReceived,
 	}, nil
 }
+
+const (
+	// FailOnce refuses the first publish. Later attempts go out.
+	FailOnce = "once"
+	// FailAlways refuses every publish until the attempt cap dead-letters the row.
+	FailAlways = "always"
+)
+
+// PublishRefusal reports a deliberate publish failure carried in the message.
+// attempt is the claim count, starting at 1.
+func PublishRefusal(payload []byte, attempt int) (string, bool) {
+	switch failMode(payload) {
+	case FailOnce:
+		if attempt <= 1 {
+			return "publish refused: fail once", true
+		}
+	case FailAlways:
+		return "publish refused: fail always", true
+	}
+	return "", false
+}
+
+// FailureNote is the composer line for a message the transmitter will refuse.
+func FailureNote(payload []byte) string {
+	switch failMode(payload) {
+	case FailOnce:
+		return "Stored. The transmitter fails the first publish, then sends it."
+	case FailAlways:
+		return "Stored. The transmitter fails each publish until the row is dead."
+	default:
+		return ""
+	}
+}
+
+func failMode(payload []byte) string {
+	var body struct {
+		Fail string `json:"fail"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return ""
+	}
+	return body.Fail
+}

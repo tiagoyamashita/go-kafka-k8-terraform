@@ -23,6 +23,27 @@ func TestParseKeepsOriginalJSON(t *testing.T) {
 	}
 }
 
+func TestPublishRefusalHonorsTheFailField(t *testing.T) {
+	once := []byte(`{"id":"11111111-1111-1111-1111-111111111111","fail":"once"}`)
+	reason, refuse := PublishRefusal(once, 1)
+	if !refuse || reason != "publish refused: fail once" {
+		t.Fatalf("first once %q %v", reason, refuse)
+	}
+	if _, refuse = PublishRefusal(once, 2); refuse {
+		t.Fatal("second once attempt should publish")
+	}
+	always := []byte(`{"id":"11111111-1111-1111-1111-111111111111","fail":"always"}`)
+	if _, refuse = PublishRefusal(always, 3); !refuse {
+		t.Fatal("always should keep refusing")
+	}
+	if FailureNote(once) == "" || FailureNote(always) == "" {
+		t.Fatal("missing failure note")
+	}
+	if _, refuse = PublishRefusal([]byte(`{"id":"11111111-1111-1111-1111-111111111111"}`), 1); refuse {
+		t.Fatal("a normal message was refused")
+	}
+}
+
 func TestParseRejectsInvalidMessages(t *testing.T) {
 	cases := [][]byte{
 		[]byte(`not-json`),
