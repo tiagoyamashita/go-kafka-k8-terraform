@@ -69,16 +69,28 @@
     .tabbar label { display: inline-block; margin: 0; padding: 8px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 14px; }
     #tab-console:checked ~ .tabbar label[for="tab-console"],
     #tab-failures:checked ~ .tabbar label[for="tab-failures"],
-    #tab-debug:checked ~ .tabbar label[for="tab-debug"] { background: #fffdf8; border-color: #e2dbcf; }
+    #tab-debug:checked ~ .tabbar label[for="tab-debug"],
+    #tab-glossary:checked ~ .tabbar label[for="tab-glossary"] { background: #fffdf8; border-color: #e2dbcf; }
     .panel { display: none; }
     #tab-console:checked ~ main.panel { display: grid; }
     #tab-failures:checked ~ section.failures { display: block; }
     #tab-debug:checked ~ section.debug { display: block; }
+    #tab-glossary:checked ~ section.glossary { display: grid; }
     .failures, .debug { margin: 0 32px 48px; }
+    .glossary { grid-template-columns: 220px 1fr; gap: 20px; margin: 0 32px 48px; background: transparent; border: 0; padding: 0; }
+    .glossary .topics, .glossary article { background: #fffdf8; border: 1px solid #e2dbcf; border-radius: 12px; padding: 18px; }
+    .topic-input { position: absolute; opacity: 0; pointer-events: none; }
+    .glossary .topics label { display: block; margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-weight: 500; }
+    .glossary article { display: none; }
+    #topic-kafka:checked ~ .topics label[for="topic-kafka"] { background: #f3efe6; font-weight: 650; }
+    #topic-kafka:checked ~ article.kafka { display: block; }
     .debug h2.subhead { margin-top: 28px; }
     .guide tbody tr { cursor: default; }
     .guide tbody tr:hover { background: transparent; }
-    @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; }
+      #tab-glossary:checked ~ section.glossary { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -89,10 +101,12 @@
   <input class="tab-input" type="radio" name="tab" id="tab-console" checked>
   <input class="tab-input" type="radio" name="tab" id="tab-failures">
   <input class="tab-input" type="radio" name="tab" id="tab-debug">
+  <input class="tab-input" type="radio" name="tab" id="tab-glossary">
   <nav class="tabbar">
     <label for="tab-console">Transfer console</label>
     <label for="tab-failures">Common Failures</label>
     <label for="tab-debug">How to debug</label>
+    <label for="tab-glossary">What is what</label>
   </nav>
   <main class="panel">
     <section>
@@ -333,6 +347,42 @@
         </tr>
       </tbody>
     </table>
+  </section>
+  <section class="panel glossary">
+    <input class="topic-input" type="radio" name="topic" id="topic-kafka" checked>
+    <nav class="topics">
+      <h2>Topics</h2>
+      <label for="topic-kafka">Kafka and Confluent</label>
+    </nav>
+    <article class="topic kafka">
+      <h2>Kafka and Confluent</h2>
+      <p>Apache Kafka is the open-source broker. A topic, a produce, and a consume are the protocol.</p>
+      <p>Confluent is the company started by the people who created Kafka. In the Kafka world the name means their products around Kafka, not a different protocol.</p>
+      <table class="guide">
+        <thead>
+          <tr><th>Name</th><th>What it is</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Apache Kafka</td>
+            <td>The open-source broker. This cluster runs it in kind.</td>
+          </tr>
+          <tr>
+            <td>Confluent</td>
+            <td>The company started by Kafka's creators.</td>
+          </tr>
+          <tr>
+            <td>Confluent Platform</td>
+            <td>Kafka plus Schema Registry, Kafka Connect, ksqlDB, and a control center. You run it.</td>
+          </tr>
+          <tr>
+            <td>Confluent Cloud</td>
+            <td>The same broker, run for you. The client still speaks the Kafka protocol. The usual connection is <span class="mono">SASL_SSL</span> with an API key, instead of plaintext <span class="mono">127.0.0.1:9092</span>.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>This service already uses the Confluent setting names: <span class="mono">KAFKA_BOOTSTRAP_SERVERS</span>, <span class="mono">KAFKA_SECURITY_PROTOCOL</span>, and the SASL user and password. Pointing it at Confluent Cloud is an environment change.</p>
+    </article>
   </section>
 </body>
 </html>
