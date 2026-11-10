@@ -51,6 +51,7 @@ func New(producer kafka.Producer, reader Reader, topic string) (*Handler, error)
 // Register mounts the console routes.
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /{$}", h.page)
+	mux.HandleFunc("GET /examples", h.loadExample)
 	mux.HandleFunc("POST /messages", h.send)
 	mux.HandleFunc("GET /history", h.history)
 	mux.HandleFunc("GET /history/{id}", h.detail)
@@ -58,31 +59,46 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 func (h *Handler) page(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "page", map[string]any{
-		"Composer": composerData{Message: sampleMessage()},
+		"Composer": newComposer(sampleMessage(), "", "", validExampleID),
 	})
+}
+
+func (h *Handler) loadExample(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("example")
+	ex, ok := exampleByID(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	body := ex.Body
+	if ex.ID == validExampleID {
+		body = sampleMessage()
+	}
+	h.render(w, "composer", newComposer(body, "", "", ex.ID))
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.render(w, "composer", composerData{Error: "The form could not be read."})
+		h.render(w, "composer", newComposer("", "The form could not be read.", "", validExampleID))
 		return
 	}
+	selected := r.FormValue("example")
 	raw := strings.TrimSpace(r.FormValue("message"))
 	if len(raw) > 64*1024 {
-		h.render(w, "composer", composerData{Message: raw, Error: "The message is larger than 64KiB."})
+		h.render(w, "composer", newComposer(raw, "The message is larger than 64KiB.", "", selected))
 		return
 	}
 	rec, err := transfer.Parse([]byte(raw))
 	if err != nil {
-		h.render(w, "composer", composerData{Message: raw, Error: "The message must be a JSON object with a UUID id."})
+		h.render(w, "composer", newComposer(raw, "The message must be a JSON object with a UUID id.", "", selected))
 		return
 	}
 	if err := h.producer.Produce(r.Context(), h.topic, rec.ID, []byte(raw)); err != nil {
-		h.render(w, "composer", composerData{Message: raw, Error: "Kafka did not accept the message: " + err.Error()})
+		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected))
 		return
 	}
 	w.Header().Set("HX-Trigger", "refresh-history")
-	h.render(w, "composer", composerData{Message: sampleMessage(), SentID: rec.ID})
+	h.render(w, "composer", newComposer(sampleMessage(), "", rec.ID, validExampleID))
 }
 
 func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
@@ -141,10 +157,65 @@ func (h *Handler) render(w http.ResponseWriter, name string, data any) {
 	_, _ = io.Copy(w, &buf)
 }
 
+const validExampleID = "valid"
+
+type requestExample struct {
+	ID    string
+	Label string
+	Body  string
+}
+
+// requestExamples is the send-pane list. The first entry is a fresh valid
+// message. The rest are bodies the pane rejects.
+var requestExamples = []requestExample{
+	{ID: validExampleID, Label: "Valid transfer"},
+	{ID: "not-json", Label: "Not JSON", Body: "not json"},
+	{ID: "array", Label: "JSON array", Body: `[{"id":"11111111-1111-1111-1111-111111111111"}]`},
+	{ID: "missing-id", Label: "Missing id", Body: `{"type":"transfer","payload":{"amount":10}}`},
+	{ID: "empty-id", Label: "Empty id", Body: `{"id":"","type":"transfer"}`},
+	{ID: "bad-id", Label: "id is not a UUID", Body: `{"id":"transfer-1","type":"transfer"}`},
+	{ID: "short-id", Label: "UUID too short", Body: `{"id":"11111111-1111-1111-1111-11111111111","type":"transfer"}`},
+	{ID: "number-id", Label: "id is a number", Body: `{"id":1}`},
+	{ID: "string", Label: "Bare string", Body: `"just a string"`},
+	{ID: "truncated", Label: "Truncated JSON", Body: `{"id":"11111111-1111-1111-1111-111111111111"`},
+}
+
+func exampleByID(id string) (requestExample, bool) {
+	for _, ex := range requestExamples {
+		if ex.ID == id {
+			return ex, true
+		}
+	}
+	return requestExample{}, false
+}
+
+type exampleView struct {
+	ID       string
+	Label    string
+	Selected bool
+}
+
 type composerData struct {
-	Message string
-	Error   string
-	SentID  string
+	Message  string
+	Error    string
+	SentID   string
+	Examples []exampleView
+}
+
+func newComposer(message, errText, sentID, selected string) composerData {
+	if selected == "" {
+		selected = validExampleID
+	}
+	views := make([]exampleView, len(requestExamples))
+	for i, ex := range requestExamples {
+		views[i] = exampleView{ID: ex.ID, Label: ex.Label, Selected: ex.ID == selected}
+	}
+	return composerData{
+		Message:  message,
+		Error:    errText,
+		SentID:   sentID,
+		Examples: views,
+	}
 }
 
 type rowView struct {

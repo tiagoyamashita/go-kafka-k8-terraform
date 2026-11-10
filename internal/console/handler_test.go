@@ -24,6 +24,32 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "Send") || !strings.Contains(body, "hx-post=\"/messages\"") {
 		t.Fatalf("page missing send form: %s", body)
 	}
+	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") {
+		t.Fatalf("page missing request list: %s", body)
+	}
+}
+
+func TestSelectExampleLoadsTheBody(t *testing.T) {
+	prod := &fakeProducer{}
+	h := newTestHandler(t, store.NewMemory(), prod)
+	rec := httptest.NewRecorder()
+	h.loadExample(rec, httptest.NewRequest(http.MethodGet, "/examples?example=missing-id", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "amount") || !strings.Contains(body, `value="missing-id" selected`) {
+		t.Fatalf("box was not filled: %s", body)
+	}
+	if len(prod.records) != 0 {
+		t.Fatal("choosing an example produced a message")
+	}
+
+	missing := httptest.NewRecorder()
+	h.loadExample(missing, httptest.NewRequest(http.MethodGet, "/examples?example=nope", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("status %d", missing.Code)
+	}
 }
 
 func TestSendProducesThePostedJSON(t *testing.T) {
