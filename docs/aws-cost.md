@@ -48,6 +48,24 @@ Same applications, with a Multi-AZ database, three production brokers, and two w
 
 MSK is about 60% of that total. A larger broker or a fourth broker moves the bill faster than adding transmitter replicas.
 
+## Free tier
+
+The free tier does not cover this stack. EKS and MSK have no free allowance, and those two lines are about $150 of the $253 small cluster ($73 for the control plane, $67 for two `kafka.t3.small` brokers, $10 for broker storage). A NAT gateway has no free allowance either.
+
+What a new account can get depends on when it was opened.
+
+Accounts opened on or after 15 July 2025 receive $100 in credits at sign-up and can earn up to $100 more, $200 in total, for six months. On the Free plan the account can use a limited service list and closes when the credits run out or the six months end. EKS and MSK sit outside that list, so this deployment needs the Paid plan. On the Paid plan the same credits pay the bill until they are gone. At the small-cluster rate, $200 lasts about three weeks.
+
+Accounts opened before 15 July 2025 keep the older 12-month offers:
+
+| Offer | What it covers here | What it leaves |
+| --- | --- | --- |
+| EC2, 750 hours / month of `t2.micro` or `t3.micro` | One always-on 1 GiB instance | The worker in the table is a `t3.medium`. A micro is too small for Grafana, Prometheus, and Tempo together with the three Go processes. |
+| RDS, 750 hours / month of `db.t3.micro` or `db.t4g.micro`, plus 20 GB | The single-AZ database and its disk, about $14 / month | Multi-AZ. The second instance is billed. |
+| 20 GB of RDS backups, 30 GB of EBS | The root volume on one small node | Extra volumes. |
+
+That older offer knocks the database off the small-cluster bill and still leaves EKS, MSK, and the NAT gateway. The floor for a replicated broker plus a managed Kubernetes control plane stays near $150 a month.
+
 ## What else shows up on the bill
 
 These stay small at the message rate this service is built for, and they grow with bytes rather than with pod count.
