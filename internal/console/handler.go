@@ -73,7 +73,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 func (h *Handler) page(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "page", map[string]any{
-		"Composer": newComposer(sampleMessage(), "", "", validExampleID, catchPane),
+		"Composer": newComposer(sampleMessage(), "", "", validExampleID, false),
 	})
 }
 
@@ -84,36 +84,29 @@ func (h *Handler) loadExample(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	catch := normalizeCatch(r.URL.Query().Get("catch"))
-	if ex.ID == brokerRejectID {
-		catch = catchKafka
-	}
-	h.render(w, "composer", newComposer(ex.text(), "", "", ex.ID, catch))
+	h.render(w, "composer", newComposer(ex.text(), "", "", ex.ID, r.URL.Query().Get("front") == "1"))
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.render(w, "composer", newComposer("", "The form could not be read.", "", validExampleID, catchPane))
+		h.render(w, "composer", newComposer("", "The form could not be read.", "", validExampleID, false))
 		return
 	}
 	selected := r.FormValue("example")
-	catch := normalizeCatch(r.FormValue("catch"))
-	if selected == brokerRejectID {
-		catch = catchKafka
-	}
+	front := r.FormValue("front") == "1"
 	raw := strings.TrimSpace(r.FormValue("message"))
 	if len(raw) > 2*1024*1024 {
-		h.render(w, "composer", newComposer("", "The message is larger than 2MiB.", "", selected, catch))
+		h.render(w, "composer", newComposer("", "The message is larger than 2MiB.", "", selected, front))
 		return
 	}
 	rec, err := transfer.Parse([]byte(raw))
 	over := len(raw) > transfer.MaxBodyBytes
-	if catch == catchPane && over {
-		h.render(w, "composer", newComposer(raw, "The message is larger than 64KiB.", "", selected, catch))
+	if front && over {
+		h.render(w, "composer", newComposer(raw, "The message is larger than 64KiB.", "", selected, front))
 		return
 	}
-	if catch == catchPane && err != nil {
-		h.render(w, "composer", newComposer(raw, "The message must be a JSON object with a UUID id.", "", selected, catch))
+	if front && err != nil {
+		h.render(w, "composer", newComposer(raw, "The message must be a JSON object with a UUID id.", "", selected, front))
 		return
 	}
 	key := "invalid"
@@ -124,20 +117,14 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 		sentID = rec.ID
 		note = transfer.FailureNote([]byte(raw))
 	}
-	if catch == catchKafka && err != nil && !over {
-		note = "Kafka accepted the record. It does not check the JSON. The receiver will dead-letter it."
-	}
-	if catch == catchKafka && over {
-		note = "Kafka accepted a body over 64KiB. The transfers.in topic limit usually rejects that produce first."
-	}
 	if err := h.producer.Produce(r.Context(), h.topic, key, []byte(raw)); err != nil {
 		h.kafkaErrs.Add(key, err.Error())
 		w.Header().Set("HX-Trigger", "refresh-history")
-		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected, catch))
+		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected, front))
 		return
 	}
 	w.Header().Set("HX-Trigger", "refresh-history")
-	data := newComposer(sampleMessage(), "", sentID, validExampleID, catch)
+	data := newComposer(sampleMessage(), "", sentID, validExampleID, front)
 	data.Note = note
 	h.render(w, "composer", data)
 }
@@ -289,23 +276,23 @@ type requestExample struct {
 
 // requestExamples is the send-pane list. Valid transfer is published.
 // The fail entries are stored, then the transmitter refuses them.
-// Broker rejects the body is random text the broker will not store.
-// The rest are bodies the pane rejects.
+// Receiver entries are dead-lettered by the receiver.
+// The Kafka entry is random text the broker will not store.
 var requestExamples = []requestExample{
 	{ID: validExampleID, Label: "Valid transfer"},
 	{ID: "fail-once", Label: "Fail publish once", Fail: transfer.FailOnce},
 	{ID: "fail-always", Label: "Fail until dead", Fail: transfer.FailAlways},
-	{ID: "not-json", Label: "Not JSON", Body: "not json"},
-	{ID: "array", Label: "JSON array", Body: `[{"id":"11111111-1111-1111-1111-111111111111"}]`},
-	{ID: "missing-id", Label: "Missing id", Body: `{"type":"transfer","payload":{"amount":10}}`},
-	{ID: "empty-id", Label: "Empty id", Body: `{"id":"","type":"transfer"}`},
-	{ID: "bad-id", Label: "id is not a UUID", Body: `{"id":"transfer-1","type":"transfer"}`},
-	{ID: "short-id", Label: "UUID too short", Body: `{"id":"11111111-1111-1111-1111-11111111111","type":"transfer"}`},
-	{ID: "number-id", Label: "id is a number", Body: `{"id":1}`},
-	{ID: "string", Label: "Bare string", Body: `"just a string"`},
-	{ID: "truncated", Label: "Truncated JSON", Body: `{"id":"11111111-1111-1111-1111-111111111111"`},
-	{ID: "oversize", Label: "Larger than 64KiB"},
-	{ID: brokerRejectID, Label: "Broker rejects the body"},
+	{ID: "not-json", Label: "Receiver: not JSON", Body: "not json"},
+	{ID: "array", Label: "Receiver: JSON array", Body: `[{"id":"11111111-1111-1111-1111-111111111111"}]`},
+	{ID: "missing-id", Label: "Receiver: missing id", Body: `{"type":"transfer","payload":{"amount":10}}`},
+	{ID: "empty-id", Label: "Receiver: empty id", Body: `{"id":"","type":"transfer"}`},
+	{ID: "bad-id", Label: "Receiver: id is not a UUID", Body: `{"id":"transfer-1","type":"transfer"}`},
+	{ID: "short-id", Label: "Receiver: UUID too short", Body: `{"id":"11111111-1111-1111-1111-11111111111","type":"transfer"}`},
+	{ID: "number-id", Label: "Receiver: id is a number", Body: `{"id":1}`},
+	{ID: "string", Label: "Receiver: bare string", Body: `"just a string"`},
+	{ID: "truncated", Label: "Receiver: truncated JSON", Body: `{"id":"11111111-1111-1111-1111-111111111111"`},
+	{ID: "oversize", Label: "Receiver: larger than 64KiB"},
+	{ID: brokerRejectID, Label: "Kafka: message too large"},
 }
 
 func (ex requestExample) text() string {
@@ -343,26 +330,11 @@ type composerData struct {
 	Error    string
 	SentID   string
 	Note     string
-	Catch    string
+	Front    bool
 	Examples []exampleView
 }
 
-const (
-	catchPane     = "pane"
-	catchReceiver = "receiver"
-	catchKafka    = "kafka"
-)
-
-func normalizeCatch(v string) string {
-	switch v {
-	case catchReceiver, catchKafka:
-		return v
-	default:
-		return catchPane
-	}
-}
-
-func newComposer(message, errText, sentID, selected, catch string) composerData {
+func newComposer(message, errText, sentID, selected string, front bool) composerData {
 	if selected == "" {
 		selected = validExampleID
 	}
@@ -374,7 +346,7 @@ func newComposer(message, errText, sentID, selected, catch string) composerData 
 		Message:  message,
 		Error:    errText,
 		SentID:   sentID,
-		Catch:    normalizeCatch(catch),
+		Front:    front,
 		Examples: views,
 	}
 }

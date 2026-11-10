@@ -145,17 +145,17 @@
         <tr>
           <td>A red line in the send pane. Nothing new on the right.</td>
           <td>Send pane</td>
-          <td>Catch the error at is This pane. The body is not a JSON object with a UUID id, or it is larger than 64KiB. Kafka is not called.</td>
+          <td>Catch it on the front end is checked. The body is not a JSON object with a UUID id, or it is larger than 64KiB. Kafka is not called.</td>
         </tr>
         <tr>
           <td>A green line saying the receiver will dead-letter it. A row under Dead-lettered, and no consumed row.</td>
           <td>Receiver</td>
-          <td>Catch the error at is Receiver. The same bad body, including one larger than 64KiB, is produced. The receiver writes the error to <span class="mono">transfers.dlq</span> and does not store it.</td>
+          <td>Catch it on the front end is unchecked. Send a Receiver request, including Receiver: larger than 64KiB. The receiver writes the error to <span class="mono">transfers.dlq</span> and does not store it.</td>
         </tr>
         <tr>
           <td>Kafka did not accept the message.</td>
           <td>Kafka</td>
-          <td>The broker is down, the address is wrong, or the produce is denied. The thrown text is kept under Kafka errors. Send Broker rejects the body. That text does not compress, so <span class="mono">transfers.in</span> refuses it. Larger than 64KiB is only the letter x, which compresses under the limit, so Kafka accepts it.</td>
+          <td>The broker is down, the address is wrong, or the produce is denied. The thrown text is kept under Kafka errors. Leave the checkbox unchecked and send Kafka: message too large. That text does not compress, so <span class="mono">transfers.in</span> refuses it. Receiver: larger than 64KiB is only the letter x, which compresses under the limit, so Kafka accepts it.</td>
         </tr>
         <tr>
           <td>A green Sent line. The id never appears under Consumed messages.</td>
@@ -272,14 +272,9 @@
     <option value="{{.ID}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>
     {{end}}
   </select>
-  <p class="hint">Valid transfer is stored and published. Fail publish once and Fail until dead are stored, then the transmitter refuses them. The other requests fail the id check. Broker rejects the body is random text over 64KiB. Kafka refuses that produce, and the error is listed under Kafka errors.</p>
-  <label for="catch">Catch the error at</label>
-  <select id="catch" name="catch">
-    <option value="pane" {{if eq .Catch "pane"}}selected{{end}}>This pane</option>
-    <option value="receiver" {{if eq .Catch "receiver"}}selected{{end}}>Receiver</option>
-    <option value="kafka" {{if eq .Catch "kafka"}}selected{{end}}>Kafka</option>
-  </select>
-  <p class="hint">This pane stops a bad body before Kafka. Receiver dead-letters it, including a body over 64KiB. A rejected produce is listed under Kafka errors.</p>
+  <p class="hint">Valid transfer is stored and published. Fail publish once and Fail until dead are stored, then the transmitter refuses them. Receiver requests are dead-lettered by the receiver. Kafka: message too large is random text the broker refuses.</p>
+  <label class="check" for="front"><input type="checkbox" id="front" name="front" value="1" {{if .Front}}checked{{end}}> Catch it on the front end</label>
+  <p class="hint">Checked, a bad body stops here and Kafka is not called. Unchecked, a Receiver request is dead-lettered by the receiver, and Kafka: message too large is refused by the broker.</p>
   <label for="message">Message JSON</label>
   <textarea id="message" name="message">{{.Message}}</textarea>
   {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
@@ -329,7 +324,7 @@
   </tbody>
 </table>
 {{else}}
-<p class="hint">Nothing dead-lettered yet. Set Catch the error at to Receiver and send a failing request.</p>
+<p class="hint">Nothing dead-lettered yet. Leave the checkbox unchecked and send a Receiver request.</p>
 {{end}}
 {{if .More}}<div class="more"></div>{{end}}
 {{end}}

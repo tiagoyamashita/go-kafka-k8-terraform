@@ -26,7 +26,7 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "Send") || !strings.Contains(body, "hx-post=\"/messages\"") {
 		t.Fatalf("page missing send form: %s", body)
 	}
-	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") || !strings.Contains(body, "Fail until dead") || !strings.Contains(body, "Broker rejects the body") || !strings.Contains(body, "Catch the error at") {
+	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Receiver: missing id") || !strings.Contains(body, "Fail until dead") || !strings.Contains(body, "Kafka: message too large") || !strings.Contains(body, "Catch it on the front end") {
 		t.Fatalf("page missing request list: %s", body)
 	}
 	if !strings.Contains(body, "Dead-lettered") || !strings.Contains(body, `hx-get="/dead-letters"`) || !strings.Contains(body, "Kafka errors") || !strings.Contains(body, `hx-get="/kafka-errors"`) {
@@ -195,7 +195,7 @@ func newTestHandler(t *testing.T, reader Reader, prod *fakeProducer) *Handler {
 	return h
 }
 
-func TestCatchAtChoosesPaneReceiverOrKafka(t *testing.T) {
+func TestFrontEndCheckStopsABadBody(t *testing.T) {
 	prod := &fakeProducer{}
 	h := newTestHandler(t, store.NewMemory(), prod)
 	over := strings.Repeat("x", transfer.MaxBodyBytes+1)
@@ -205,14 +205,28 @@ func TestCatchAtChoosesPaneReceiverOrKafka(t *testing.T) {
 		t.Fatalf("pane %s produced %d", pane.Body.String(), len(prod.records))
 	}
 
-	receiver := postCatch(t, h, over, "receiver")
+	receiver := postMessage(t, h, over, false)
 	if !strings.Contains(receiver.Body.String(), "dead-letter") || len(prod.records) != 1 {
 		t.Fatalf("receiver %s produced %d", receiver.Body.String(), len(prod.records))
 	}
+}
 
-	kafka := postCatch(t, h, "not json", "kafka")
-	if !strings.Contains(kafka.Body.String(), "does not check the JSON") || len(prod.records) != 2 {
-		t.Fatalf("kafka %s produced %d", kafka.Body.String(), len(prod.records))
+func TestRequestListPutsReceiverBreaksBeforeKafka(t *testing.T) {
+	receiverAt := -1
+	kafkaAt := -1
+	for i, ex := range requestExamples {
+		if strings.HasPrefix(ex.Label, "Receiver:") && receiverAt < 0 {
+			receiverAt = i
+		}
+		if ex.ID == brokerRejectID {
+			kafkaAt = i
+		}
+		if strings.HasPrefix(ex.Label, "Receiver:") && kafkaAt >= 0 && i > kafkaAt {
+			t.Fatalf("receiver example %s after kafka", ex.Label)
+		}
+	}
+	if receiverAt < 0 || kafkaAt < receiverAt {
+		t.Fatalf("order receiver %d kafka %d", receiverAt, kafkaAt)
 	}
 }
 
@@ -228,25 +242,18 @@ func TestSendWithoutTheCheckHandsTheBodyToKafka(t *testing.T) {
 	}
 }
 
-func postCatch(t *testing.T, h *Handler, message, catch string) *httptest.ResponseRecorder {
+func postMessage(t *testing.T, h *Handler, message string, front bool) *httptest.ResponseRecorder {
 	t.Helper()
 	form := url.Values{}
 	form.Set("message", message)
-	form.Set("catch", catch)
+	if front {
+		form.Set("front", "1")
+	}
 	req := httptest.NewRequest(http.MethodPost, "/messages", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.send(rec, req)
 	return rec
-}
-
-func postMessage(t *testing.T, h *Handler, message string, check bool) *httptest.ResponseRecorder {
-	t.Helper()
-	catch := "receiver"
-	if check {
-		catch = "pane"
-	}
-	return postCatch(t, h, message, catch)
 }
 
 type produced struct {
@@ -418,7 +425,6 @@ func TestBrokerRejectExampleIsRefusedByKafka(t *testing.T) {
 	h := newTestHandler(t, store.NewMemory(), prod)
 	form := url.Values{}
 	form.Set("example", brokerRejectID)
-	form.Set("catch", "pane")
 	form.Set("message", body)
 	req := httptest.NewRequest(http.MethodPost, "/messages", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -434,8 +440,8 @@ func TestBrokerRejectExampleIsRefusedByKafka(t *testing.T) {
 	}
 
 	loaded := httptest.NewRecorder()
-	h.loadExample(loaded, httptest.NewRequest(http.MethodGet, "/examples?example="+brokerRejectID+"&catch=pane", nil))
-	if !strings.Contains(loaded.Body.String(), `value="kafka" selected`) {
-		t.Fatalf("example did not select kafka: %s", loaded.Body.String()[:300])
+	h.loadExample(loaded, httptest.NewRequest(http.MethodGet, "/examples?example="+brokerRejectID+"&front=1", nil))
+	if !strings.Contains(loaded.Body.String(), `value="broker-reject" selected`) || !strings.Contains(loaded.Body.String(), `value="1" checked`) {
+		t.Fatalf("example %s", loaded.Body.String()[:400])
 	}
 }
