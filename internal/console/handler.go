@@ -59,7 +59,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 func (h *Handler) page(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "page", map[string]any{
-		"Composer": newComposer(sampleMessage(), "", "", validExampleID),
+		"Composer": newComposer(sampleMessage(), "", "", validExampleID, true),
 	})
 }
 
@@ -74,31 +74,42 @@ func (h *Handler) loadExample(w http.ResponseWriter, r *http.Request) {
 	if ex.ID == validExampleID {
 		body = sampleMessage()
 	}
-	h.render(w, "composer", newComposer(body, "", "", ex.ID))
+	h.render(w, "composer", newComposer(body, "", "", ex.ID, r.URL.Query().Get("check") == "1"))
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		h.render(w, "composer", newComposer("", "The form could not be read.", "", validExampleID))
+		h.render(w, "composer", newComposer("", "The form could not be read.", "", validExampleID, true))
 		return
 	}
 	selected := r.FormValue("example")
+	check := r.FormValue("check") == "1"
 	raw := strings.TrimSpace(r.FormValue("message"))
 	if len(raw) > 64*1024 {
-		h.render(w, "composer", newComposer(raw, "The message is larger than 64KiB.", "", selected))
+		h.render(w, "composer", newComposer(raw, "The message is larger than 64KiB.", "", selected, check))
 		return
 	}
 	rec, err := transfer.Parse([]byte(raw))
-	if err != nil {
-		h.render(w, "composer", newComposer(raw, "The message must be a JSON object with a UUID id.", "", selected))
+	if err != nil && check {
+		h.render(w, "composer", newComposer(raw, "The message must be a JSON object with a UUID id.", "", selected, check))
 		return
 	}
-	if err := h.producer.Produce(r.Context(), h.topic, rec.ID, []byte(raw)); err != nil {
-		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected))
+	key := "invalid"
+	sentID := ""
+	note := "Sent to transfers.in. The receiver will dead-letter it instead of storing it."
+	if err == nil {
+		key = rec.ID
+		sentID = rec.ID
+		note = ""
+	}
+	if err := h.producer.Produce(r.Context(), h.topic, key, []byte(raw)); err != nil {
+		h.render(w, "composer", newComposer(raw, "Kafka did not accept the message: "+err.Error(), "", selected, check))
 		return
 	}
 	w.Header().Set("HX-Trigger", "refresh-history")
-	h.render(w, "composer", newComposer(sampleMessage(), "", rec.ID, validExampleID))
+	data := newComposer(sampleMessage(), "", sentID, validExampleID, check)
+	data.Note = note
+	h.render(w, "composer", data)
 }
 
 func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
@@ -199,10 +210,12 @@ type composerData struct {
 	Message  string
 	Error    string
 	SentID   string
+	Note     string
+	Check    bool
 	Examples []exampleView
 }
 
-func newComposer(message, errText, sentID, selected string) composerData {
+func newComposer(message, errText, sentID, selected string, check bool) composerData {
 	if selected == "" {
 		selected = validExampleID
 	}
@@ -214,6 +227,7 @@ func newComposer(message, errText, sentID, selected string) composerData {
 		Message:  message,
 		Error:    errText,
 		SentID:   sentID,
+		Check:    check,
 		Examples: views,
 	}
 }

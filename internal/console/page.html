@@ -16,6 +16,8 @@
     section { background: #fffdf8; border: 1px solid #e2dbcf; border-radius: 12px; padding: 18px; }
     h2 { margin: 0 0 8px; font-size: 18px; }
     label { display: block; margin: 12px 0 6px; font-size: 13px; font-weight: 650; }
+    label.check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+    label.check input { width: auto; }
     select, textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d9d1c3; border-radius: 8px; background: #fff; font: inherit; }
     textarea { min-height: 220px; font: 13px/1.45 Consolas, monospace; }
     button { margin-top: 12px; background: #1d1a16; color: #f6f1e7; border: 0; border-radius: 8px; padding: 8px 14px; font: inherit; cursor: pointer; }
@@ -66,16 +68,21 @@
 {{define "composer"}}
 <form hx-post="/messages" hx-target="#composer" hx-swap="innerHTML">
   <label for="example">Request</label>
-  <select id="example" name="example" hx-get="/examples" hx-trigger="change" hx-target="#composer" hx-swap="innerHTML" hx-include="this">
+  <select id="example" name="example" hx-get="/examples" hx-trigger="change" hx-target="#composer" hx-swap="innerHTML" hx-include="closest form">
     {{range .Examples}}
     <option value="{{.ID}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>
     {{end}}
   </select>
-  <p class="hint">Valid transfer is accepted. The other requests are rejected in this pane.</p>
+  <p class="hint">Valid transfer is accepted. The other requests fail the id check.</p>
+  <label class="check" for="check">
+    <input id="check" type="checkbox" name="check" value="1" {{if .Check}}checked{{end}}>
+    Reject invalid messages in this pane
+  </label>
   <label for="message">Message JSON</label>
   <textarea id="message" name="message">{{.Message}}</textarea>
   {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
   {{if .SentID}}<p class="ok">Sent <span class="mono">{{.SentID}}</span> to transfers.in.</p>{{end}}
+  {{if .Note}}<p class="ok">{{.Note}}</p>{{end}}
   <button type="submit">Send</button>
 </form>
 {{end}}

@@ -57,7 +57,7 @@ func TestSendProducesThePostedJSON(t *testing.T) {
 	prod := &fakeProducer{}
 	h := newTestHandler(t, mem, prod)
 	body := `{"id":"11111111-1111-1111-1111-111111111111","type":"transfer","payload":{"amount":10}}`
-	rec := postMessage(t, h, body)
+	rec := postMessage(t, h, body, true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -81,7 +81,7 @@ func TestSendProducesThePostedJSON(t *testing.T) {
 func TestSendRejectsAMessageWithoutAnID(t *testing.T) {
 	prod := &fakeProducer{}
 	h := newTestHandler(t, store.NewMemory(), prod)
-	rec := postMessage(t, h, `{"type":"transfer","payload":{"amount":10}}`)
+	rec := postMessage(t, h, `{"type":"transfer","payload":{"amount":10}}`, true)
 	if !strings.Contains(rec.Body.String(), "UUID id") {
 		t.Fatalf("response %s", rec.Body.String())
 	}
@@ -148,10 +148,25 @@ func newTestHandler(t *testing.T, reader Reader, prod *fakeProducer) *Handler {
 	return h
 }
 
-func postMessage(t *testing.T, h *Handler, message string) *httptest.ResponseRecorder {
+func TestSendWithoutTheCheckHandsTheBodyToKafka(t *testing.T) {
+	prod := &fakeProducer{}
+	h := newTestHandler(t, store.NewMemory(), prod)
+	rec := postMessage(t, h, `not json`, false)
+	if !strings.Contains(rec.Body.String(), "dead-letter") {
+		t.Fatalf("response %s", rec.Body.String())
+	}
+	if len(prod.records) != 1 || prod.records[0].key != "invalid" || string(prod.records[0].value) != "not json" {
+		t.Fatalf("produced %#v", prod.records)
+	}
+}
+
+func postMessage(t *testing.T, h *Handler, message string, check bool) *httptest.ResponseRecorder {
 	t.Helper()
 	form := url.Values{}
 	form.Set("message", message)
+	if check {
+		form.Set("check", "1")
+	}
 	req := httptest.NewRequest(http.MethodPost, "/messages", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -180,7 +195,7 @@ func (f *fakeProducer) Produce(_ context.Context, topic, key string, value []byt
 
 func TestSendReportsABrokerFailure(t *testing.T) {
 	h := newTestHandler(t, store.NewMemory(), &fakeProducer{fail: errors.New("broker down")})
-	rec := postMessage(t, h, `{"id":"11111111-1111-1111-1111-111111111111","type":"transfer","payload":{"amount":10}}`)
+	rec := postMessage(t, h, `{"id":"11111111-1111-1111-1111-111111111111","type":"transfer","payload":{"amount":10}}`, true)
 	if !strings.Contains(rec.Body.String(), "broker down") {
 		t.Fatalf("response %s", rec.Body.String())
 	}
