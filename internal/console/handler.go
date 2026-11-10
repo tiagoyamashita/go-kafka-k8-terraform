@@ -3,7 +3,9 @@ package console
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,7 +84,11 @@ func (h *Handler) loadExample(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.render(w, "composer", newComposer(ex.text(), "", "", ex.ID, normalizeCatch(r.URL.Query().Get("catch"))))
+	catch := normalizeCatch(r.URL.Query().Get("catch"))
+	if ex.ID == brokerRejectID {
+		catch = catchKafka
+	}
+	h.render(w, "composer", newComposer(ex.text(), "", "", ex.ID, catch))
 }
 
 func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +98,9 @@ func (h *Handler) send(w http.ResponseWriter, r *http.Request) {
 	}
 	selected := r.FormValue("example")
 	catch := normalizeCatch(r.FormValue("catch"))
+	if selected == brokerRejectID {
+		catch = catchKafka
+	}
 	raw := strings.TrimSpace(r.FormValue("message"))
 	if len(raw) > 2*1024*1024 {
 		h.render(w, "composer", newComposer("", "The message is larger than 2MiB.", "", selected, catch))
@@ -269,6 +278,8 @@ func (h *Handler) render(w http.ResponseWriter, name string, data any) {
 
 const validExampleID = "valid"
 
+const brokerRejectID = "broker-reject"
+
 type requestExample struct {
 	ID    string
 	Label string
@@ -278,6 +289,7 @@ type requestExample struct {
 
 // requestExamples is the send-pane list. Valid transfer is published.
 // The fail entries are stored, then the transmitter refuses them.
+// Broker rejects the body is random text the broker will not store.
 // The rest are bodies the pane rejects.
 var requestExamples = []requestExample{
 	{ID: validExampleID, Label: "Valid transfer"},
@@ -293,6 +305,7 @@ var requestExamples = []requestExample{
 	{ID: "string", Label: "Bare string", Body: `"just a string"`},
 	{ID: "truncated", Label: "Truncated JSON", Body: `{"id":"11111111-1111-1111-1111-111111111111"`},
 	{ID: "oversize", Label: "Larger than 64KiB"},
+	{ID: brokerRejectID, Label: "Broker rejects the body"},
 }
 
 func (ex requestExample) text() string {
@@ -301,6 +314,8 @@ func (ex requestExample) text() string {
 		return sampleMessage()
 	case ex.ID == "oversize":
 		return strings.Repeat("x", transfer.MaxBodyBytes+1)
+	case ex.ID == brokerRejectID:
+		return brokerRejectBody()
 	case ex.Fail != "":
 		return failMessage(ex.Fail)
 	default:
@@ -416,6 +431,16 @@ func fallbackEvents(rec transfer.Record) []transfer.Event {
 		events = append(events, transfer.Event{Status: rec.Status, Detail: rec.LastError, At: at})
 	}
 	return events
+}
+
+// brokerRejectBody is random text larger than the transfers.in limit.
+// Repeated bytes compress under that limit, so Kafka accepts them.
+func brokerRejectBody() string {
+	raw := make([]byte, 51*1024)
+	if _, err := rand.Read(raw); err != nil {
+		return err.Error()
+	}
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 func failMessage(mode string) string {

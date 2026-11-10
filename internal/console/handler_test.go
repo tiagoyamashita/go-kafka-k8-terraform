@@ -26,7 +26,7 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "Send") || !strings.Contains(body, "hx-post=\"/messages\"") {
 		t.Fatalf("page missing send form: %s", body)
 	}
-	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") || !strings.Contains(body, "Fail until dead") || !strings.Contains(body, "Catch the error at") {
+	if !strings.Contains(body, "Valid transfer") || !strings.Contains(body, "Missing id") || !strings.Contains(body, "Fail until dead") || !strings.Contains(body, "Broker rejects the body") || !strings.Contains(body, "Catch the error at") {
 		t.Fatalf("page missing request list: %s", body)
 	}
 	if !strings.Contains(body, "Dead-lettered") || !strings.Contains(body, `hx-get="/dead-letters"`) || !strings.Contains(body, "Kafka errors") || !strings.Contains(body, `hx-get="/kafka-errors"`) {
@@ -402,5 +402,40 @@ func TestSendReportsABrokerFailure(t *testing.T) {
 	h.kafkaErrors(list, httptest.NewRequest(http.MethodGet, "/kafka-errors", nil))
 	if !strings.Contains(list.Body.String(), "broker down") || !strings.Contains(list.Body.String(), "11111111-1111-1111-1111-111111111111") {
 		t.Fatalf("kafka errors %s", list.Body.String())
+	}
+}
+
+func TestBrokerRejectExampleIsRefusedByKafka(t *testing.T) {
+	ex, ok := exampleByID(brokerRejectID)
+	if !ok {
+		t.Fatal("missing example")
+	}
+	body := ex.text()
+	if len(body) <= transfer.MaxBodyBytes {
+		t.Fatalf("body length %d", len(body))
+	}
+	prod := &fakeProducer{fail: errors.New("MESSAGE_TOO_LARGE: The request included a message larger than the max message size the server will accept")}
+	h := newTestHandler(t, store.NewMemory(), prod)
+	form := url.Values{}
+	form.Set("example", brokerRejectID)
+	form.Set("catch", "pane")
+	form.Set("message", body)
+	req := httptest.NewRequest(http.MethodPost, "/messages", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.send(rec, req)
+	if !strings.Contains(rec.Body.String(), "MESSAGE_TOO_LARGE") || strings.Contains(rec.Body.String(), "larger than 64KiB.") {
+		t.Fatalf("response %s", rec.Body.String()[:200])
+	}
+	list := httptest.NewRecorder()
+	h.kafkaErrors(list, httptest.NewRequest(http.MethodGet, "/kafka-errors", nil))
+	if !strings.Contains(list.Body.String(), "MESSAGE_TOO_LARGE") {
+		t.Fatalf("kafka errors %s", list.Body.String())
+	}
+
+	loaded := httptest.NewRecorder()
+	h.loadExample(loaded, httptest.NewRequest(http.MethodGet, "/examples?example="+brokerRejectID+"&catch=pane", nil))
+	if !strings.Contains(loaded.Body.String(), `value="kafka" selected`) {
+		t.Fatalf("example did not select kafka: %s", loaded.Body.String()[:300])
 	}
 }
