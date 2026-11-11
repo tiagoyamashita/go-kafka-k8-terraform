@@ -82,8 +82,20 @@
     .topic-input { position: absolute; opacity: 0; pointer-events: none; }
     .glossary .topics label { display: block; margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-weight: 500; }
     .glossary article { display: none; }
-    #topic-kafka:checked ~ .topics label[for="topic-kafka"] { background: #f3efe6; font-weight: 650; }
-    #topic-kafka:checked ~ article.kafka { display: block; }
+    #topic-kafka:checked ~ .topics label[for="topic-kafka"],
+    #topic-topics:checked ~ .topics label[for="topic-topics"],
+    #topic-receiver:checked ~ .topics label[for="topic-receiver"],
+    #topic-transmitter:checked ~ .topics label[for="topic-transmitter"],
+    #topic-postgres:checked ~ .topics label[for="topic-postgres"],
+    #topic-dlq:checked ~ .topics label[for="topic-dlq"],
+    #topic-console:checked ~ .topics label[for="topic-console"] { background: #f3efe6; font-weight: 650; }
+    #topic-kafka:checked ~ article.kafka,
+    #topic-topics:checked ~ article.topics,
+    #topic-receiver:checked ~ article.receiver,
+    #topic-transmitter:checked ~ article.transmitter,
+    #topic-postgres:checked ~ article.postgres,
+    #topic-dlq:checked ~ article.dlq,
+    #topic-console:checked ~ article.console { display: block; }
     .debug h2.subhead { margin-top: 28px; }
     .guide tbody tr { cursor: default; }
     .guide tbody tr:hover { background: transparent; }
@@ -350,9 +362,21 @@
   </section>
   <section class="panel glossary">
     <input class="topic-input" type="radio" name="topic" id="topic-kafka" checked>
+    <input class="topic-input" type="radio" name="topic" id="topic-topics">
+    <input class="topic-input" type="radio" name="topic" id="topic-receiver">
+    <input class="topic-input" type="radio" name="topic" id="topic-transmitter">
+    <input class="topic-input" type="radio" name="topic" id="topic-postgres">
+    <input class="topic-input" type="radio" name="topic" id="topic-dlq">
+    <input class="topic-input" type="radio" name="topic" id="topic-console">
     <nav class="topics">
       <h2>Topics</h2>
       <label for="topic-kafka">Kafka and Confluent</label>
+      <label for="topic-topics">The three topics</label>
+      <label for="topic-receiver">Receiver</label>
+      <label for="topic-transmitter">Transmitter</label>
+      <label for="topic-postgres">Postgres</label>
+      <label for="topic-dlq">Dead letter</label>
+      <label for="topic-console">This console</label>
     </nav>
     <article class="topic kafka">
       <h2>Kafka and Confluent</h2>
@@ -365,7 +389,7 @@
         <tbody>
           <tr>
             <td>Apache Kafka</td>
-            <td>The open-source broker. This cluster runs it in kind.</td>
+            <td>The open-source broker. This cluster runs Apache Kafka 3.9 in KRaft mode, one broker, plaintext.</td>
           </tr>
           <tr>
             <td>Confluent</td>
@@ -381,7 +405,91 @@
           </tr>
         </tbody>
       </table>
-      <p>This service already uses the Confluent setting names: <span class="mono">KAFKA_BOOTSTRAP_SERVERS</span>, <span class="mono">KAFKA_SECURITY_PROTOCOL</span>, and the SASL user and password. Pointing it at Confluent Cloud is an environment change.</p>
+      <p>This service already uses the Confluent setting names: <span class="mono">KAFKA_BOOTSTRAP_SERVERS</span>, <span class="mono">KAFKA_SECURITY_PROTOCOL</span>, and the SASL user and password. Pointing it at Confluent Cloud is an environment change. The Go client is franz-go.</p>
+    </article>
+    <article class="topic topics">
+      <h2>The three topics</h2>
+      <p>Each topic has three partitions and a replication factor of one. Kafka stores bytes. It does not read the JSON or the id.</p>
+      <table class="guide">
+        <thead>
+          <tr><th>Topic</th><th>Who writes</th><th>Who reads</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="mono">transfers.in</span></td>
+            <td>This console, or any sender</td>
+            <td>The receiver. The largest record is 64KiB after compression.</td>
+          </tr>
+          <tr>
+            <td><span class="mono">transfers.out</span></td>
+            <td>The transmitter</td>
+            <td>Whatever consumes the stored JSON next. The record key is the transfer id.</td>
+          </tr>
+          <tr>
+            <td><span class="mono">transfers.dlq</span></td>
+            <td>The receiver, for a body it will not store. The transmitter, after the publish attempts run out.</td>
+            <td>This console, into the Dead-lettered list.</td>
+          </tr>
+        </tbody>
+      </table>
+    </article>
+    <article class="topic receiver">
+      <h2>Receiver</h2>
+      <p>The receiver is the Go process that reads <span class="mono">transfers.in</span> and writes Postgres. It does not publish to <span class="mono">transfers.out</span>.</p>
+      <p>A body it will store is one JSON object with a UUID <span class="mono">id</span>, and no larger than 64KiB. The whole document is inserted. A second delivery of the same id does not replace the row.</p>
+      <p>Anything else is dead-lettered. The error text, such as <span class="mono">message is not json</span> or <span class="mono">invalid transfer id</span>, is written by this process. Kafka only stores that record.</p>
+      <p>The source offset is committed after the insert succeeds, or after the dead-letter produce is accepted. A database error leaves the offset uncommitted, so Kafka delivers the record again.</p>
+    </article>
+    <article class="topic transmitter">
+      <h2>Transmitter</h2>
+      <p>The transmitter does not consume Kafka. It polls Postgres for rows that still need to leave, then produces the stored JSON to <span class="mono">transfers.out</span>.</p>
+      <p>A claim uses <span class="mono">FOR UPDATE SKIP LOCKED</span>, so more than one transmitter can run. The lease is two minutes. The attempt cap is five, and the poll is about two seconds.</p>
+      <table class="guide">
+        <thead>
+          <tr><th>Status</th><th>What it means</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="status status-received">received</span></td>
+            <td>Stored, and not yet claimed.</td>
+          </tr>
+          <tr>
+            <td><span class="status status-publishing">publishing</span></td>
+            <td>Claimed. Another worker can take it after the lease expires.</td>
+          </tr>
+          <tr>
+            <td><span class="status status-published">published</span></td>
+            <td>The produce to <span class="mono">transfers.out</span> succeeded.</td>
+          </tr>
+          <tr>
+            <td><span class="status status-failed">failed</span></td>
+            <td>A publish failed and attempts remain. Fail publish once does this once, then publishes.</td>
+          </tr>
+          <tr>
+            <td><span class="status status-dead">dead</span></td>
+            <td>Every attempt failed, and the dead-letter write succeeded. Fail until dead is the demo for that path.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Delivery is at-least-once. A crash after a successful produce and before the row is marked published can send the same JSON twice. The outbound key is the id, so a downstream consumer can drop the duplicate.</p>
+    </article>
+    <article class="topic postgres">
+      <h2>Postgres</h2>
+      <p>Postgres is the durable record. The database is <span class="mono">transfers</span>. The table stores one row per transfer.</p>
+      <p><span class="mono">payload</span> is <span class="mono">jsonb</span> and holds the original message. The columns around it exist so the transmitter can find, lock, and finish the row. An insert uses <span class="mono">ON CONFLICT DO NOTHING</span>.</p>
+      <p>The outbox is the set of rows still in <span class="status status-received">received</span>, <span class="status status-publishing">publishing</span>, or <span class="status status-failed">failed</span>. <span class="status status-published">published</span> and <span class="status status-dead">dead</span> have left it.</p>
+    </article>
+    <article class="topic dlq">
+      <h2>Dead letter</h2>
+      <p>A dead letter is a record on <span class="mono">transfers.dlq</span> that this service will not treat as a normal transfer.</p>
+      <p>The receiver writes one when the body is not a JSON object with a UUID id, or is larger than 64KiB. The document is <span class="mono">{"error","message"}</span> when the body was JSON, and <span class="mono">{"error","raw"}</span> when it was not. The Go receiver writes that error. Kafka only stores the record.</p>
+      <p>The transmitter writes the original payload, not that envelope, after five failed publishes. If that write also fails, the row stays <span class="status status-failed">failed</span> until it succeeds.</p>
+    </article>
+    <article class="topic console">
+      <h2>This console</h2>
+      <p>The console is the page you are using. It produces to <span class="mono">transfers.in</span>. It does not insert rows. The receiver does that, and the Consumed messages list reads them back from Postgres.</p>
+      <p>Dead-lettered is a consumer of <span class="mono">transfers.dlq</span>, kept in memory. A restart reads the topic again from the beginning. It does not use the receiver's consumer group.</p>
+      <p>Kafka errors is the produce error from this page, also kept in memory. A restart clears it. Where to look says whether the next check is the broker log or only this list.</p>
     </article>
   </section>
 </body>

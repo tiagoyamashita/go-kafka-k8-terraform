@@ -47,7 +47,7 @@ func TestPageListsNothingUntilAMessageIsStored(t *testing.T) {
 	if !strings.Contains(body, "How to debug") || !strings.Contains(body, "Kibana Discover") || !strings.Contains(body, "transfer_dlq_total") || !strings.Contains(body, "UNKNOWN_TOPIC_OR_PARTITION") || !strings.Contains(body, "ILLEGAL_SASL_STATE") {
 		t.Fatalf("page missing debug guide: %s", body)
 	}
-	if !strings.Contains(body, "What is what") || !strings.Contains(body, "Kafka and Confluent") || !strings.Contains(body, "Confluent Cloud") || !strings.Contains(body, "KAFKA_BOOTSTRAP_SERVERS") {
+	if !strings.Contains(body, "What is what") || !strings.Contains(body, "Kafka and Confluent") || !strings.Contains(body, "Confluent Cloud") || !strings.Contains(body, "The three topics") || !strings.Contains(body, "FOR UPDATE SKIP LOCKED") || !strings.Contains(body, "This console") {
 		t.Fatalf("page missing glossary: %s", body)
 	}
 }
