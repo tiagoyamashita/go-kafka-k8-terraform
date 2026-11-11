@@ -410,8 +410,24 @@ func TestSendReportsABrokerFailure(t *testing.T) {
 	}
 	list := httptest.NewRecorder()
 	h.kafkaErrors(list, httptest.NewRequest(http.MethodGet, "/kafka-errors", nil))
-	if !strings.Contains(list.Body.String(), "broker down") || !strings.Contains(list.Body.String(), "11111111-1111-1111-1111-111111111111") {
+	if !strings.Contains(list.Body.String(), "broker down") || !strings.Contains(list.Body.String(), "11111111-1111-1111-1111-111111111111") || !strings.Contains(list.Body.String(), "Where to look") {
 		t.Fatalf("kafka errors %s", list.Body.String())
+	}
+}
+
+func TestKafkaErrorSaysWhereToLook(t *testing.T) {
+	h := newTestHandler(t, store.NewMemory(), &fakeProducer{fail: errors.New("MESSAGE_TOO_LARGE: The request included a message larger than the max message size the server will accept")})
+	postMessage(t, h, `{"id":"11111111-1111-1111-1111-111111111111","type":"transfer","payload":{"amount":10}}`, true)
+	list := httptest.NewRecorder()
+	h.kafkaErrors(list, httptest.NewRequest(http.MethodGet, "/kafka-errors", nil))
+	if !strings.Contains(list.Body.String(), "Broker log") || !strings.Contains(list.Body.String(), "65536") {
+		t.Fatalf("where %s", list.Body.String())
+	}
+	if kafkaWhere("dial tcp 127.0.0.1:1: connectex: No connection could be made because the target machine actively refused it.") != "Only this list. The dial failed before a broker saw it." {
+		t.Fatal("wrong address")
+	}
+	if !strings.Contains(kafkaWhere("ILLEGAL_SASL_STATE: Request is not valid given the current SASL state."), "plaintext") {
+		t.Fatal("sasl")
 	}
 }
 

@@ -127,9 +127,9 @@
       <div id="dead-detail"></div>
       <div class="head split">
         <h2>Kafka errors</h2>
-        <p class="hint">The broker throws these when it rejects the produce.</p>
+        <p class="hint">The broker or the client throws these when the produce is rejected. Where to look is the next place to check.</p>
       </div>
-      <p class="hint">The text is the error from the produce call. The latest 10 are shown. Scroll this list to load 10 more.</p>
+      <p class="hint">The text is the error from the produce call. A dial failure is only in this list. A broker answer is also in the Kafka pod log. The latest 10 are shown. Scroll this list to load 10 more.</p>
       <div id="kafka-scroll" class="pane-scroll" onscroll="maybeMore(this, 'kafka-errors')">
         <div id="kafka-errors" data-limit="10" data-url="/kafka-errors" hx-get="/kafka-errors" hx-vals='js:{limit: document.getElementById("kafka-errors").dataset.limit}' hx-trigger="load, every 2s, refresh-history from:body" hx-swap="innerHTML">
           <p class="hint">Loading…</p>
@@ -457,13 +457,14 @@
 {{if .Errors}}
 <table>
   <thead>
-    <tr><th>When</th><th>Error</th><th>Key</th></tr>
+    <tr><th>When</th><th>Error</th><th>Where to look</th><th>Key</th></tr>
   </thead>
   <tbody>
     {{range .Errors}}
     <tr>
       <td>{{.At}}</td>
       <td class="err">{{.Error}}</td>
+      <td>{{.Where}}</td>
       <td class="mono">{{.Key}}</td>
     </tr>
     {{end}}

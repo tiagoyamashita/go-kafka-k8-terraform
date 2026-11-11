@@ -229,6 +229,7 @@ func (h *Handler) kafkaErrors(w http.ResponseWriter, r *http.Request) {
 			At:    stamp(item.At),
 			Key:   item.Key,
 			Error: item.Error,
+			Where: kafkaWhere(item.Error),
 		})
 	}
 	h.render(w, "kafkaRows", map[string]any{"Errors": views, "More": more})
@@ -409,6 +410,26 @@ type kafkaErrorView struct {
 	At    string
 	Key   string
 	Error string
+	Where string
+}
+
+func kafkaWhere(err string) string {
+	switch {
+	case strings.Contains(err, "MESSAGE_TOO_LARGE"):
+		return "Broker log: kubectl -n transfer logs kafka-0. transfers.in allows 65536 bytes after compression."
+	case strings.Contains(err, "UNKNOWN_TOPIC_OR_PARTITION"):
+		return "Broker log. Auto-create is off, so transfers.missing is not created."
+	case strings.Contains(err, "INVALID_TOPIC_EXCEPTION"):
+		return "Broker log. The topic name is not valid."
+	case strings.Contains(err, "ILLEGAL_SASL_STATE"):
+		return "Broker log. The listener is plaintext, so SASL is rejected."
+	case strings.Contains(err, "127.0.0.1:1"), strings.Contains(err, "connection refused"), strings.Contains(err, "actively refused"):
+		return "Only this list. The dial failed before a broker saw it."
+	case strings.Contains(err, "broker unreachable"), strings.Contains(err, "192.0.2.1"), strings.Contains(err, "deadline exceeded"), strings.Contains(err, "i/o timeout"):
+		return "Only this list. The address did not route, so the Kafka pod log stays quiet."
+	default:
+		return "This list has the produce error. If the broker answered, also read kubectl -n transfer logs kafka-0."
+	}
 }
 
 type rowView struct {
