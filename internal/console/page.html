@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Transfer console</title>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/mermaid@11.4.1/dist/mermaid.min.js"></script>
   <script>
     function maybeMore(scroll, id) {
       var list = document.getElementById(id);
@@ -24,6 +25,26 @@
         list.dataset.loading = "";
       });
     }
+    document.addEventListener("DOMContentLoaded", function () {
+      if (!window.mermaid) {
+        return;
+      }
+      mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "strict" });
+      function drawGlossary() {
+        document.querySelectorAll(".glossary article.topic").forEach(function (article) {
+          if (getComputedStyle(article).display === "none") {
+            return;
+          }
+          var nodes = article.querySelectorAll("pre.mermaid:not([data-processed])");
+          if (nodes.length) {
+            mermaid.run({ nodes: nodes });
+          }
+        });
+      }
+      document.querySelectorAll('input[name="topic"], #tab-glossary').forEach(function (el) {
+        el.addEventListener("change", function () { setTimeout(drawGlossary, 30); });
+      });
+    });
   </script>
   <style>
     :root { color-scheme: light; }
@@ -82,6 +103,8 @@
     .topic-input { position: absolute; opacity: 0; pointer-events: none; }
     .glossary .topics label { display: block; margin: 8px 0 0; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-weight: 500; }
     .glossary article { display: none; }
+    .glossary .mermaid { margin: 12px 0 16px; background: #f7f3ea; border-radius: 8px; padding: 12px; overflow-x: auto; }
+    .glossary .mermaid svg { max-width: 100%; height: auto; }
     #topic-kafka:checked ~ .topics label[for="topic-kafka"],
     #topic-topics:checked ~ .topics label[for="topic-topics"],
     #topic-receiver:checked ~ .topics label[for="topic-receiver"],
@@ -380,6 +403,14 @@
     </nav>
     <article class="topic kafka">
       <h2>Kafka and Confluent</h2>
+      <pre class="mermaid">
+flowchart LR
+  client[Go client]
+  local[Apache Kafka]
+  cloud[Confluent Cloud]
+  client -->|PLAINTEXT| local
+  client -->|SASL_SSL| cloud
+      </pre>
       <p>Apache Kafka is the open-source broker. A topic, a produce, and a consume are the protocol.</p>
       <p>Confluent is the company started by the people who created Kafka. In the Kafka world the name means their products around Kafka, not a different protocol.</p>
       <table class="guide">
@@ -409,6 +440,18 @@
     </article>
     <article class="topic topics">
       <h2>The three topics</h2>
+      <pre class="mermaid">
+flowchart LR
+  inbound[transfers.in]
+  receiver[Receiver]
+  pg[Postgres]
+  transmitter[Transmitter]
+  outbound[transfers.out]
+  dlq[transfers.dlq]
+  inbound --> receiver --> pg --> transmitter --> outbound
+  receiver --> dlq
+  transmitter --> dlq
+      </pre>
       <p>Each topic has three partitions and a replication factor of one. Kafka stores bytes. It does not read the JSON or the id.</p>
       <table class="guide">
         <thead>
@@ -435,6 +478,16 @@
     </article>
     <article class="topic receiver">
       <h2>Receiver</h2>
+      <pre class="mermaid">
+flowchart TD
+  msg["Record on transfers.in"]
+  check{"JSON object with a UUID id, at most 64KiB?"}
+  store[Insert into Postgres]
+  dead["Write the error to transfers.dlq"]
+  msg --> check
+  check -->|yes| store
+  check -->|no| dead
+      </pre>
       <p>The receiver is the Go process that reads <span class="mono">transfers.in</span> and writes Postgres. It does not publish to <span class="mono">transfers.out</span>.</p>
       <p>A body it will store is one JSON object with a UUID <span class="mono">id</span>, and no larger than 64KiB. The whole document is inserted. A second delivery of the same id does not replace the row.</p>
       <p>Anything else is dead-lettered. The error text, such as <span class="mono">message is not json</span> or <span class="mono">invalid transfer id</span>, is written by this process. Kafka only stores that record.</p>
@@ -442,6 +495,16 @@
     </article>
     <article class="topic transmitter">
       <h2>Transmitter</h2>
+      <pre class="mermaid">
+stateDiagram-v2
+  [*] --> received
+  received --> publishing
+  publishing --> published
+  publishing --> failed
+  failed --> publishing
+  publishing --> dead
+  failed --> dead
+      </pre>
       <p>The transmitter does not consume Kafka. It polls Postgres for rows that still need to leave, then produces the stored JSON to <span class="mono">transfers.out</span>.</p>
       <p>A claim uses <span class="mono">FOR UPDATE SKIP LOCKED</span>, so more than one transmitter can run. The lease is two minutes. The attempt cap is five, and the poll is about two seconds.</p>
       <table class="guide">
@@ -475,18 +538,50 @@
     </article>
     <article class="topic postgres">
       <h2>Postgres</h2>
+      <pre class="mermaid">
+flowchart TB
+  subgraph outbox [Still in the outbox]
+    received
+    publishing
+    failed
+  end
+  subgraph done [Left the outbox]
+    published
+    dead
+  end
+      </pre>
       <p>Postgres is the durable record. The database is <span class="mono">transfers</span>. The table stores one row per transfer.</p>
       <p><span class="mono">payload</span> is <span class="mono">jsonb</span> and holds the original message. The columns around it exist so the transmitter can find, lock, and finish the row. An insert uses <span class="mono">ON CONFLICT DO NOTHING</span>.</p>
       <p>The outbox is the set of rows still in <span class="status status-received">received</span>, <span class="status status-publishing">publishing</span>, or <span class="status status-failed">failed</span>. <span class="status status-published">published</span> and <span class="status status-dead">dead</span> have left it.</p>
     </article>
     <article class="topic dlq">
       <h2>Dead letter</h2>
+      <pre class="mermaid">
+flowchart LR
+  bad[Body the receiver will not store]
+  receiver[Receiver]
+  tries[Five failed publishes]
+  transmitter[Transmitter]
+  dlq[transfers.dlq]
+  bad --> receiver --> dlq
+  tries --> transmitter --> dlq
+      </pre>
       <p>A dead letter is a record on <span class="mono">transfers.dlq</span> that this service will not treat as a normal transfer.</p>
       <p>The receiver writes one when the body is not a JSON object with a UUID id, or is larger than 64KiB. The document is <span class="mono">{"error","message"}</span> when the body was JSON, and <span class="mono">{"error","raw"}</span> when it was not. The Go receiver writes that error. Kafka only stores the record.</p>
       <p>The transmitter writes the original payload, not that envelope, after five failed publishes. If that write also fails, the row stays <span class="status status-failed">failed</span> until it succeeds.</p>
     </article>
     <article class="topic console">
       <h2>This console</h2>
+      <pre class="mermaid">
+flowchart LR
+  console[Console]
+  inbound[transfers.in]
+  pg[Postgres]
+  dlq[transfers.dlq]
+  console -->|Send| inbound
+  pg -->|Consumed messages| console
+  dlq -->|Dead-lettered| console
+      </pre>
       <p>The console is the page you are using. It produces to <span class="mono">transfers.in</span>. It does not insert rows. The receiver does that, and the Consumed messages list reads them back from Postgres.</p>
       <p>Dead-lettered is a consumer of <span class="mono">transfers.dlq</span>, kept in memory. A restart reads the topic again from the beginning. It does not use the receiver's consumer group.</p>
       <p>Kafka errors is the produce error from this page, also kept in memory. A restart clears it. Where to look says whether the next check is the broker log or only this list.</p>
