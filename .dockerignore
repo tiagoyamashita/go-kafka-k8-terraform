@@ -1,0 +1,5 @@
+.git
+terraform
+graphify-out
+bin
+*.md

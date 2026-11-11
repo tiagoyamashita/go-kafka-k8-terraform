@@ -1,0 +1,19 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: transfer
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.32.2
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+      - containerPort: 30092
+        hostPort: 9092
+        protocol: TCP
+      - containerPort: 30432
+        hostPort: 5432
+        protocol: TCP
+      - containerPort: 30088
+        hostPort: 30088
+        protocol: TCP

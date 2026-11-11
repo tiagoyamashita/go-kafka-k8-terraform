@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: transfer
+    folder: Transfer
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
